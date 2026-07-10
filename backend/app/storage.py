@@ -73,6 +73,7 @@ async def create_job_record(
     }
     await redis.hset(f"job:{job_id}", mapping=record)
     await redis.expire(f"job:{job_id}", settings.job_ttl_seconds)
+    await redis.zadd("job-expirations", {job_id: expires.timestamp()})
     await redis.set(f"active:{ip_hash}", job_id, ex=settings.job_timeout_seconds + 300)
     return record
 

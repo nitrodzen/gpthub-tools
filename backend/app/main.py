@@ -296,6 +296,7 @@ async def delete_job(
     record = await authorized_job(redis, job_id, token)
     await redis.hset(f"job:{job_id}", mapping={"status": JobStatus.CANCELLED.value})
     await redis.delete(f"active:{record['ip_hash']}")
+    await redis.zrem("job-expirations", job_id)
     if record["status"] != JobStatus.RUNNING.value:
         delete_job_directory(job_id)
     return None
