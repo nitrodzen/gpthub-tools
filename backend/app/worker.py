@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import asyncio
+import contextlib
 import json
 import os
 import socket
 import traceback
 
-from arq import cron
 from arq.connections import RedisSettings
 
 from .config import settings
@@ -43,11 +44,23 @@ async def heartbeat(ctx: dict) -> None:
     await ctx["redis"].set(f"worker-heartbeat:{WORKER_ID}", "1", ex=90)
 
 
+async def heartbeat_loop(ctx: dict) -> None:
+    while True:
+        await asyncio.sleep(30)
+        await heartbeat(ctx)
+
+
 async def on_startup(ctx: dict) -> None:
     await heartbeat(ctx)
+    ctx["heartbeat_task"] = asyncio.create_task(heartbeat_loop(ctx))
 
 
 async def on_shutdown(ctx: dict) -> None:
+    task = ctx.get("heartbeat_task")
+    if task:
+        task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await task
     await ctx["redis"].delete(f"worker-heartbeat:{WORKER_ID}")
 
 
@@ -125,7 +138,6 @@ async def run_operation(ctx: dict, job_id: str) -> None:
 
 class WorkerSettings:
     functions = [run_operation]
-    cron_jobs = [cron(heartbeat, second={0, 30})]
     redis_settings = RedisSettings.from_dsn(settings.redis_url)
     queue_name = os.getenv("ARQ_QUEUE", "local")
     max_jobs = int(os.getenv("WORKER_CONCURRENCY", "1"))

@@ -141,11 +141,12 @@ async def health(request: Request) -> dict:
     disk = shutil.disk_usage(settings.jobs_root)
     return {
         "status": "ok"
-        if redis_ok and workers > 0 and disk.free > settings.max_job_bytes
+        if redis_ok and workers >= settings.expected_workers and disk.free > settings.max_job_bytes
         else "degraded",
         "version": app.version,
         "redis": redis_ok,
         "workers": workers,
+        "expectedWorkers": settings.expected_workers,
         "freeBytes": disk.free,
     }
 

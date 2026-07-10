@@ -33,6 +33,7 @@ class Settings:
     max_pdf_pages: int = int(os.getenv("MAX_PDF_PAGES", "250"))
     max_image_pixels: int = int(os.getenv("MAX_IMAGE_PIXELS", "100000000"))
     job_timeout_seconds: int = int(os.getenv("JOB_TIMEOUT_SECONDS", "1800"))
+    expected_workers: int = int(os.getenv("EXPECTED_WORKERS", "4"))
 
 
 settings = Settings()
