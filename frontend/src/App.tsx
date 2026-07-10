@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { cancelJob, createJob, fetchResult, getJob, type Job, type JobCapability, type Operation } from './api'
 import { getCopy, type Language } from './i18n'
 
@@ -38,6 +38,115 @@ function SparkIcon() {
 
 function Hint({ text, below = false }: { text: string; below?: boolean }) {
   return <span className={`hint ${below ? 'hint-below' : ''}`} data-tip={text} aria-label={text} tabIndex={0}>i</span>
+}
+
+const ZOOM_STEP = 0.25
+const MAX_ZOOM = 4
+
+export function ZoomPane({ label, src, checkerboard, copy }: { label: string; src: string; checkerboard: boolean; copy: ReturnType<typeof getCopy> }) {
+  const viewport = useRef<HTMLDivElement>(null)
+  const drag = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null)
+  const [{ zoom, position }, setView] = useState({ zoom: 1, position: { x: 0, y: 0 } })
+
+  useEffect(() => {
+    setView({ zoom: 1, position: { x: 0, y: 0 } })
+  }, [src])
+
+  const clampPosition = useCallback((next: { x: number; y: number }, level: number) => {
+    const bounds = viewport.current?.getBoundingClientRect()
+    if (!bounds) return next
+    const maxX = (bounds.width * (level - 1)) / 2
+    const maxY = (bounds.height * (level - 1)) / 2
+    return { x: Math.max(-maxX, Math.min(maxX, next.x)), y: Math.max(-maxY, Math.min(maxY, next.y)) }
+  }, [])
+
+  const setZoomLevel = useCallback((next: number | ((current: number) => number)) => {
+    setView((current) => {
+      const requested = typeof next === 'function' ? next(current.zoom) : next
+      const bounded = Math.max(1, Math.min(MAX_ZOOM, Math.round(requested * 100) / 100))
+      return { zoom: bounded, position: bounded === 1 ? { x: 0, y: 0 } : clampPosition(current.position, bounded) }
+    })
+  }, [clampPosition])
+
+  const panBy = useCallback((x: number, y: number) => {
+    setView((current) => ({ ...current, position: clampPosition({ x: current.position.x + x, y: current.position.y + y }, current.zoom) }))
+  }, [clampPosition])
+
+  useEffect(() => {
+    const element = viewport.current
+    if (!element) return
+    const onWheel = (event: WheelEvent) => {
+      event.preventDefault()
+      setZoomLevel((current) => current + (event.deltaY < 0 ? ZOOM_STEP : -ZOOM_STEP))
+    }
+    element.addEventListener('wheel', onWheel, { passive: false })
+    return () => element.removeEventListener('wheel', onWheel)
+  }, [setZoomLevel])
+
+  const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (zoom === 1) return
+    drag.current = { startX: event.clientX, startY: event.clientY, originX: position.x, originY: position.y }
+    event.currentTarget.setPointerCapture(event.pointerId)
+  }
+
+  const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
+    if (!drag.current) return
+    setView((current) => ({
+      ...current,
+      position: clampPosition({
+        x: drag.current!.originX + event.clientX - drag.current!.startX,
+        y: drag.current!.originY + event.clientY - drag.current!.startY,
+      }, current.zoom),
+    }))
+  }
+
+  const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    drag.current = null
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
+    const distance = event.shiftKey ? 64 : 24
+    const directions: Record<string, [number, number]> = {
+      ArrowLeft: [-distance, 0], ArrowRight: [distance, 0], ArrowUp: [0, -distance], ArrowDown: [0, distance],
+    }
+    if (event.key === '+' || event.key === '=') { event.preventDefault(); setZoomLevel(zoom + ZOOM_STEP); return }
+    if (event.key === '-') { event.preventDefault(); setZoomLevel(zoom - ZOOM_STEP); return }
+    if (event.key === '0') { event.preventDefault(); setZoomLevel(1); return }
+    if (directions[event.key] && zoom > 1) {
+      event.preventDefault()
+      panBy(...directions[event.key])
+    }
+  }
+
+  return (
+    <section className={`compare-pane ${checkerboard ? 'checkerboard' : ''}`}>
+      <header className="compare-pane-head">
+        <strong>{label}</strong>
+        <div className="compare-pane-controls" aria-label={`${copy.zoomLevel}: ${label}`}>
+          <button type="button" onClick={() => setZoomLevel(zoom - ZOOM_STEP)} disabled={zoom === 1} aria-label={`${copy.zoomOut}: ${label}`} title={copy.zoomOut}>−</button>
+          <output aria-label={`${label}: ${copy.zoomLevel}`}>{Math.round(zoom * 100)}%</output>
+          <button type="button" onClick={() => setZoomLevel(zoom + ZOOM_STEP)} disabled={zoom === MAX_ZOOM} aria-label={`${copy.zoomIn}: ${label}`} title={copy.zoomIn}>+</button>
+          <button type="button" onClick={() => setZoomLevel(1)} disabled={zoom === 1} aria-label={`${copy.resetZoom}: ${label}`} title={copy.resetZoom}>↺</button>
+        </div>
+      </header>
+      <div
+        ref={viewport}
+        className={`zoom-viewport ${zoom > 1 ? 'is-zoomed' : ''}`}
+        role="region"
+        tabIndex={0}
+        aria-label={`${label}: ${copy.zoomLevel} ${Math.round(zoom * 100)}%`}
+        style={{ touchAction: zoom > 1 ? 'none' : 'pan-y' }}
+        onPointerDown={onPointerDown}
+        onPointerMove={onPointerMove}
+        onPointerUp={onPointerUp}
+        onPointerCancel={onPointerUp}
+        onKeyDown={onKeyDown}
+      >
+        <img src={src} alt={label} draggable={false} style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${zoom})` }} />
+      </div>
+    </section>
+  )
 }
 
 function FileDrop({ files, accept, onAdd, copy }: { files: File[]; accept: string; onAdd: (files: File[]) => void; copy: ReturnType<typeof getCopy> }) {
@@ -139,7 +248,6 @@ export default function App() {
   const [job, setJob] = useState<Job | null>(null)
   const [error, setError] = useState<{ message: string; code?: string } | null>(null)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
-  const [compare, setCompare] = useState(50)
   const copy = getCopy(language)
 
   const originalUrl = useMemo(() => {
@@ -359,10 +467,12 @@ export default function App() {
             {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div></> : <><span className="status-icon">{job?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{job?.status === 'succeeded' ? copy.ready : job?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress"><span style={{ width: job?.status === 'succeeded' ? '100%' : job?.status === 'running' ? '68%' : '22%' }} /></div>{job?.resultName && <small>{job.resultName}</small>}</div><div className="job-actions">{job?.status === 'succeeded' ? <button className="download-button" onClick={() => void download()}>{copy.download} ↓</button> : <button className="text-button" onClick={() => void cancel()}>{copy.cancel}</button>}</div></>}
           </div>}
 
-          {originalUrl && resultUrl && <div className={`comparison ${tab === 'remove' ? 'checkerboard' : ''}`}>
-            <div className="comparison-head"><strong>{copy.compare}</strong><span>{copy.before} / {copy.after}</span></div>
-            <div className="compare-stage"><img src={originalUrl} alt={copy.before} /><div className="compare-result" style={{ width: `${compare}%` }}><img src={resultUrl} alt={copy.after} /></div><span className="compare-line" style={{ left: `${compare}%` }} /></div>
-            <input className="compare-range" type="range" min="0" max="100" value={compare} onChange={(event) => setCompare(Number(event.target.value))} aria-label={copy.compare} />
+          {originalUrl && resultUrl && <div className="comparison">
+            <div className="comparison-head"><strong>{copy.compare}</strong><span>{copy.zoomHint}</span></div>
+            <div className="compare-grid">
+              <ZoomPane label={copy.before} src={originalUrl} checkerboard={false} copy={copy} />
+              <ZoomPane label={copy.after} src={resultUrl} checkerboard={tab === 'remove'} copy={copy} />
+            </div>
           </div>}
         </section>
 
