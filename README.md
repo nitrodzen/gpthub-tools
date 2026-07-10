@@ -16,11 +16,13 @@ Public, bilingual file tools for [tools.gpthub.ru](https://tools.gpthub.ru): ima
 
 - `frontend`: React, TypeScript, and Vite SPA served by unprivileged Nginx.
 - `backend`: FastAPI upload/API service and ARQ workers.
+- `ai-backends`: optional, self-hostable Real-ESRGAN and background-removal services that implement the same private upstream contracts.
 - `redis`: transient queue and job metadata.
 - `clamav`: upload malware scanning.
 - `compose.yml`: production-shaped local stack with restricted containers and a loopback-only gateway.
+- `compose.ai.yml`: optional overlay that connects the bundled AI services without opening their ports to the host.
 
-The existing GPTHub image APIs remain the compute backends for upscaling and background removal. All conversions and PDF operations run locally in isolated workers.
+All image conversion, document conversion and PDF operations run locally in isolated workers. Upscaling and background removal can use configured upstream URLs or the bundled self-hosted AI overlay.
 
 ## API
 
@@ -38,6 +40,8 @@ docker compose up --build
 ```
 
 Open `http://localhost:9080`. The first ClamAV start downloads signatures and can take several minutes.
+
+To run every component yourself, including the two AI services, follow [the self-hosting guide](docs/SELF_HOSTING.md). Model weights, runtime `.env` files, certificates, uploads and caches are deliberately excluded from Git.
 
 Frontend checks:
 
@@ -61,7 +65,7 @@ PYTHONPATH=. python -m pytest
 
 ## Configuration
 
-Copy `.env.example` to `.env` for overrides. Generate a unique `APP_SECRET` in production. The file is ignored by Git and must remain server-side.
+Copy `.env.example` to `.env` for overrides. Generate a unique `APP_SECRET` in production. The file is ignored by Git and must remain server-side. The public repository contains no production hostnames, private IPs, TLS material, model weights or runtime data.
 
 Uploads are limited by file size, aggregate job size, type, signature, pixel/page count, malware scan, per-IP rate limits, and worker concurrency. Inputs are deleted after processing; results expire after 60 minutes.
 

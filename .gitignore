@@ -15,5 +15,9 @@ output/
 *.tsbuildinfo
 frontend/vite.config.js
 frontend/vite.config.d.ts
+# Downloaded AI model weights and caches must never be published.
+*.onnx
+*.pth
+ai-backends/**/models/
 .DS_Store
 Thumbs.db

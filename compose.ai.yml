@@ -1,0 +1,84 @@
+services:
+  api:
+    environment:
+      UPSCALE_URL: http://ai-upscaler:5011/upscale
+      BACKGROUND_URL: http://ai-background-remover:5010/process
+
+  worker-ai-1:
+    environment:
+      UPSCALE_URL: http://ai-upscaler:5011/upscale
+      BACKGROUND_URL: http://ai-background-remover:5010/process
+    depends_on:
+      ai-upscaler:
+        condition: service_healthy
+      ai-background-remover:
+        condition: service_healthy
+
+  worker-ai-2:
+    environment:
+      UPSCALE_URL: http://ai-upscaler:5011/upscale
+      BACKGROUND_URL: http://ai-background-remover:5010/process
+    depends_on:
+      ai-upscaler:
+        condition: service_healthy
+      ai-background-remover:
+        condition: service_healthy
+
+  ai-upscaler:
+    build:
+      context: ./ai-backends/upscaler
+    profiles: ["ai"]
+    environment:
+      MODEL_DIR: /models
+      MAX_UPLOAD_BYTES: 52428800
+      MAX_INPUT_PIXELS: 100000000
+      TILE_SIZE: 512
+    volumes:
+      - ./data/ai-models/realesrgan:/models:ro
+    networks:
+      - internal
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=512m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 8g
+    cpus: 4.0
+    gpus: all
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5011/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 12
+      start_period: 90s
+
+  ai-background-remover:
+    build:
+      context: ./ai-backends/background-remover
+    profiles: ["ai"]
+    environment:
+      U2NET_HOME: /models
+      REMBG_MODEL: birefnet-general-lite
+      NUMBA_CACHE_DIR: /tmp/numba
+      MAX_UPLOAD_BYTES: 52428800
+      MAX_INPUT_PIXELS: 100000000
+      PROCESS_MAX_SIDE: 512
+    volumes:
+      - ./data/ai-models/rembg:/models
+    networks:
+      - internal
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=256m,mode=1777
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 3g
+    cpus: 2.0
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5010/health', timeout=3)"]
+      interval: 20s
+      timeout: 5s
+      retries: 12
+      start_period: 180s

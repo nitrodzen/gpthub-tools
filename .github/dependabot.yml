@@ -8,11 +8,27 @@ updates:
     directory: /backend
     schedule:
       interval: weekly
+  - package-ecosystem: pip
+    directory: /ai-backends/upscaler
+    schedule:
+      interval: weekly
+  - package-ecosystem: pip
+    directory: /ai-backends/background-remover
+    schedule:
+      interval: weekly
   - package-ecosystem: github-actions
     directory: /
     schedule:
       interval: weekly
   - package-ecosystem: docker
     directory: /backend
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /ai-backends/upscaler
+    schedule:
+      interval: weekly
+  - package-ecosystem: docker
+    directory: /ai-backends/background-remover
     schedule:
       interval: weekly
