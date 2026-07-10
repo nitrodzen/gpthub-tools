@@ -39,7 +39,7 @@ jobs:
           cache-dependency-path: backend/requirements-dev.txt
       - run: pip install -r requirements-dev.txt
       - run: ruff check app tests
-      - run: pytest
+      - run: PYTHONPATH=. python -m pytest
 
   containers:
     runs-on: ubuntu-latest

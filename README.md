@@ -56,7 +56,7 @@ python -m venv .venv
 . .venv/bin/activate
 pip install -r requirements-dev.txt
 ruff check app tests
-pytest
+PYTHONPATH=. python -m pytest
 ```
 
 ## Configuration
