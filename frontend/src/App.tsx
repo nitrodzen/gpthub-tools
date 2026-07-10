@@ -36,6 +36,10 @@ function SparkIcon() {
   return <svg viewBox="0 0 24 24" aria-hidden="true"><path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5L12 3ZM18.5 15l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z"/></svg>
 }
 
+function Hint({ text, below = false }: { text: string; below?: boolean }) {
+  return <span className={`hint ${below ? 'hint-below' : ''}`} data-tip={text} aria-label={text} tabIndex={0}>i</span>
+}
+
 function FileDrop({ files, accept, onAdd, copy }: { files: File[]; accept: string; onAdd: (files: File[]) => void; copy: ReturnType<typeof getCopy> }) {
   const input = useRef<HTMLInputElement>(null)
   const [dragging, setDragging] = useState(false)
@@ -121,7 +125,7 @@ export default function App() {
     return saved || (window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light')
   })
   const [format, setFormat] = useState('webp')
-  const [quality, setQuality] = useState(90)
+  const [quality, setQuality] = useState(100)
   const [scale, setScale] = useState(2)
   const [maxWidth, setMaxWidth] = useState('')
   const [maxHeight, setMaxHeight] = useState('')
@@ -212,7 +216,15 @@ export default function App() {
   if (tab === 'convert' && mode === 'documents') operation = 'document-convert'
   if (tab === 'convert' && mode === 'pdf') operation = pdfAction
   const showsImageFormat = ['upscale', 'remove-background', 'image-convert', 'pdf-to-images'].includes(operation)
-  const showsQuality = operation === 'image-convert' || (showsImageFormat && (format === 'jpeg' || format === 'webp'))
+  const showsQuality = showsImageFormat && (format === 'jpeg' || format === 'webp')
+  const qualityLoss = 100 - quality
+  const estimatedSavingMin = Math.min(70, Math.round((qualityLoss * 1.25) / 5) * 5)
+  const estimatedSavingMax = Math.min(85, estimatedSavingMin + 15 + Math.round((qualityLoss * .25) / 5) * 5)
+  const qualityHint = quality === 100
+    ? copy.qualityHintMax
+    : copy.qualityHintEstimate.replace('{min}', String(estimatedSavingMin)).replace('{max}', String(estimatedSavingMax))
+  const formatHint = format === 'png' ? copy.formatPngHint : format === 'webp' ? copy.formatWebpHint : copy.formatJpegHint
+  const dpiHint = dpi === 150 ? copy.dpi150Hint : copy.dpi300Hint
 
   const accept = useMemo(() => {
     if (tab !== 'convert' || mode === 'images' || (mode === 'pdf' && pdfAction === 'images-to-pdf')) return '.png,.jpg,.jpeg,.webp,.heic,.heif,.tif,.tiff,.bmp'
@@ -325,19 +337,19 @@ export default function App() {
             </div>
             <div className="settings-column">
               <div className="settings-head"><span>02</span><strong>{language === 'ru' ? 'Настройки' : 'Settings'}</strong></div>
-              {tab === 'upscale' && <div className="field"><label>{copy.scale}</label><div className="segmented"><button className={scale === 2 ? 'active' : ''} onClick={() => setScale(2)}>2×</button><button className={scale === 4 ? 'active' : ''} onClick={() => setScale(4)}>4×</button></div></div>}
+              {tab === 'upscale' && <div className="field"><label><span className="label-with-hint">{copy.scale}<Hint text={copy.scaleHint} below /></span></label><div className="segmented"><button className={scale === 2 ? 'active' : ''} onClick={() => setScale(2)}>2×</button><button className={scale === 4 ? 'active' : ''} onClick={() => setScale(4)}>4×</button></div></div>}
               {showsImageFormat && (
-                <div className="field"><label>{copy.format}</label><select value={format} onChange={(event) => setFormat(event.target.value)}>
+                <div className="field"><label><span className="label-with-hint">{copy.format}<Hint text={formatHint} below /></span></label><select value={format} onChange={(event) => setFormat(event.target.value)}>
                   {tab !== 'remove' && <option value="jpeg">JPG</option>}<option value="png">PNG</option><option value="webp">WebP</option>
                 </select></div>
               )}
               {showsQuality && (
-                <div className="field"><label>{copy.quality}<output>{quality}%</output></label><input type="range" min="40" max="100" value={quality} onChange={(event) => setQuality(Number(event.target.value))} /></div>
+                <div className="field"><label><span className="label-with-hint">{copy.quality}<Hint text={qualityHint} /></span><output>{quality}%</output></label><input type="range" min="40" max="100" value={quality} aria-label={`${copy.quality}: ${quality}%`} title={qualityHint} onChange={(event) => setQuality(Number(event.target.value))} /></div>
               )}
-              {tab === 'convert' && mode === 'images' && <div className="dimension-grid"><div className="field"><label>{copy.maxWidth}</label><input inputMode="numeric" value={maxWidth} onChange={(event) => setMaxWidth(event.target.value.replace(/\D/g, ''))} placeholder={copy.optional} /></div><div className="field"><label>{copy.maxHeight}</label><input inputMode="numeric" value={maxHeight} onChange={(event) => setMaxHeight(event.target.value.replace(/\D/g, ''))} placeholder={copy.optional} /></div></div>}
+              {tab === 'convert' && mode === 'images' && <div className="dimension-grid"><div className="field"><label><span className="label-with-hint">{copy.maxWidth}<Hint text={copy.dimensionsHint} /></span></label><input inputMode="numeric" value={maxWidth} onChange={(event) => setMaxWidth(event.target.value.replace(/\D/g, ''))} placeholder={copy.optional} /></div><div className="field"><label>{copy.maxHeight}</label><input inputMode="numeric" value={maxHeight} onChange={(event) => setMaxHeight(event.target.value.replace(/\D/g, ''))} placeholder={copy.optional} /></div></div>}
               {operation === 'pdf-split' && <><div className="field"><label>{copy.splitMode}</label><select value={splitMode} onChange={(event) => setSplitMode(event.target.value)}><option value="ranges">{copy.byRanges}</option><option value="each">{copy.eachPage}</option></select></div>{splitMode === 'ranges' && <div className="field"><label>{copy.ranges}</label><input value={ranges} onChange={(event) => setRanges(event.target.value)} placeholder={copy.rangesHint} /></div>}</>}
               {operation === 'images-to-pdf' && <><div className="field"><label>{copy.pageSize}</label><select value={pageSize} onChange={(event) => setPageSize(event.target.value)}><option value="a4">{copy.a4}</option><option value="original">{copy.original}</option></select></div><div className="field"><label>{copy.orientation}</label><select value={orientation} onChange={(event) => setOrientation(event.target.value)}><option value="auto">{copy.auto}</option><option value="portrait">{copy.portrait}</option><option value="landscape">{copy.landscape}</option></select></div><div className="field"><label>{copy.margin}<output>{margin}</output></label><input type="range" min="0" max="30" value={margin} onChange={(event) => setMargin(Number(event.target.value))} /></div></>}
-              {operation === 'pdf-to-images' && <div className="field"><label>{copy.dpi}</label><div className="segmented"><button className={dpi === 150 ? 'active' : ''} onClick={() => setDpi(150)}>150 DPI</button><button className={dpi === 300 ? 'active' : ''} onClick={() => setDpi(300)}>300 DPI</button></div></div>}
+              {operation === 'pdf-to-images' && <div className="field"><label><span className="label-with-hint">{copy.dpi}<Hint text={dpiHint} /></span></label><div className="segmented"><button className={dpi === 150 ? 'active' : ''} onClick={() => setDpi(150)}>150 DPI</button><button className={dpi === 300 ? 'active' : ''} onClick={() => setDpi(300)}>300 DPI</button></div></div>}
               {mode === 'documents' && <div className="notice"><span>i</span><p>{copy.documentHelp}<br /><small>{language === 'ru' ? 'Сканированные PDF без текстового слоя не конвертируются.' : 'Scanned PDFs without a text layer cannot be converted.'}</small></p></div>}
               <button className="primary-button" onClick={() => void submit()} disabled={busy || files.length === 0}><SparkIcon />{busy ? copy.processing : copy.process}</button>
             </div>

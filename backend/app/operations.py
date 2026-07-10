@@ -46,7 +46,7 @@ def image_save_format(fmt: str) -> str:
     return {"jpeg": "JPEG", "jpg": "JPEG", "png": "PNG", "webp": "WEBP"}.get(fmt, "PNG")
 
 
-def save_image(image: Image.Image, destination: Path, fmt: str, quality: int = 90) -> None:
+def save_image(image: Image.Image, destination: Path, fmt: str, quality: int = 100) -> None:
     output_format = image_save_format(fmt)
     if output_format == "JPEG":
         if image.mode in {"RGBA", "LA"}:
@@ -86,7 +86,7 @@ def convert_images(files: list[dict[str, Any]], output_dir: Path, options: dict[
     fmt = str(options.get("format", "webp")).lower()
     if fmt not in {"jpg", "jpeg", "png", "webp"}:
         raise JobFailure(ErrorCode.UNSUPPORTED_FORMAT, "Unsupported output image format")
-    quality = max(1, min(100, int(options.get("quality", 90))))
+    quality = max(1, min(100, int(options.get("quality", 100))))
     max_width = max(0, int(options.get("maxWidth", 0) or 0))
     max_height = max(0, int(options.get("maxHeight", 0) or 0))
     outputs: list[Path] = []
@@ -114,7 +114,7 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
     fmt = str(options.get("format", "jpeg")).lower()
     if fmt not in {"jpg", "jpeg", "png", "webp"}:
         raise JobFailure(ErrorCode.UNSUPPORTED_FORMAT, "Unsupported output image format")
-    upstream_format = "png" if fmt == "webp" else ("jpeg" if fmt == "jpg" else fmt)
+    upstream_format = "png"
     outputs: list[Path] = []
     timeout = httpx.Timeout(settings.job_timeout_seconds, connect=30)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
@@ -135,15 +135,14 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
                 raise JobFailure(
                     ErrorCode.UPSTREAM_ERROR, "The upscaling service returned an error"
                 )
-            upstream_extension = upstream_format.replace("jpeg", "jpg")
-            raw = output_dir / (
-                f"upscaled_{clean_stem(item['original'])}_{index}.{upstream_extension}"
-            )
+            raw = output_dir / f"upscaled_{clean_stem(item['original'])}_{index}.png"
             raw.write_bytes(response.content)
-            if fmt == "webp":
-                destination = output_dir / f"upscaled_{clean_stem(item['original'])}_{index}.webp"
+            if fmt != "png":
+                destination = output_dir / (
+                    f"upscaled_{clean_stem(item['original'])}_{index}{image_extension(fmt)}"
+                )
                 with Image.open(raw) as image:
-                    save_image(image, destination, "webp", int(options.get("quality", 90)))
+                    save_image(image, destination, fmt, int(options.get("quality", 100)))
                 raw.unlink(missing_ok=True)
             else:
                 destination = raw
@@ -188,7 +187,7 @@ async def remove_background(
             if fmt == "webp":
                 destination = png.with_suffix(".webp")
                 with Image.open(png) as image:
-                    save_image(image, destination, "webp", int(options.get("quality", 90)))
+                    save_image(image, destination, "webp", int(options.get("quality", 100)))
                 png.unlink(missing_ok=True)
             else:
                 destination = png
@@ -367,7 +366,7 @@ def pdf_to_images(files: list[dict[str, Any]], output_dir: Path, options: dict[s
         bitmap = page.render(scale=dpi / 72)
         image = bitmap.to_pil()
         destination = output_dir / f"page-{number:03d}{image_extension(fmt)}"
-        save_image(image, destination, fmt, int(options.get("quality", 90)))
+        save_image(image, destination, fmt, int(options.get("quality", 100)))
         outputs.append(destination)
     return package_outputs(output_dir, outputs, "pdf-pages.zip")
 

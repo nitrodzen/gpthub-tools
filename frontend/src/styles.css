@@ -120,6 +120,12 @@ main { width: min(1080px, calc(100% - 40px)); margin: 20px auto 0; position: rel
 
 .field { display: grid; gap: 8px; margin-bottom: 18px; }
 .field label { display: flex; align-items: center; justify-content: space-between; color: var(--muted); font-size: 11px; font-weight: 700; }
+.label-with-hint { display: inline-flex; align-items: center; gap: 6px; }
+.hint { width: 16px; height: 16px; position: relative; display: inline-grid; place-items: center; flex: 0 0 auto; border: 1px solid color-mix(in srgb, var(--accent), transparent 50%); border-radius: 50%; color: var(--accent); background: var(--accent-soft); cursor: help; font-size: 10px; font-weight: 850; line-height: 1; }
+.hint::after { content: attr(data-tip); width: 245px; max-width: calc(100vw - 48px); position: absolute; left: -8px; bottom: calc(100% + 9px); z-index: 50; padding: 10px 11px; border-radius: 10px; color: #f8faff; background: #111827; box-shadow: 0 12px 32px rgba(4, 9, 22, .28); opacity: 0; visibility: hidden; transform: translateY(4px); transition: opacity .16s ease, transform .16s ease, visibility .16s ease; pointer-events: none; white-space: normal; text-align: left; font-size: 11px; font-weight: 600; line-height: 1.45; }
+.hint-below::after { top: calc(100% + 9px); bottom: auto; transform: translateY(-4px); }
+.hint:hover::after, .hint:focus::after { opacity: 1; visibility: visible; transform: translateY(0); }
+.hint:focus-visible { outline: 3px solid color-mix(in srgb, var(--accent), transparent 45%); outline-offset: 2px; }
 .field output { color: var(--text); font-size: 11px; }
 .field select, .field input:not([type="range"]) { width: 100%; height: 42px; padding: 0 11px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface-solid); color: var(--text); font-size: 12px; }
 .field input[type="range"], .compare-range { width: 100%; accent-color: var(--accent); }
