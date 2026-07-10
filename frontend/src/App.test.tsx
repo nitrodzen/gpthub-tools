@@ -27,5 +27,10 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Приблизить: До' }))
     expect(screen.getByLabelText('До: Масштаб')).toHaveTextContent('125%')
     expect(screen.getByLabelText('После: Масштаб')).toHaveTextContent('100%')
+
+    fireEvent.click(screen.getByRole('button', { name: 'После: Масштаб 100%' }))
+    expect(screen.getByLabelText('После: Масштаб')).toHaveTextContent('200%')
+    fireEvent.click(screen.getByRole('button', { name: 'После: Масштаб 200%' }))
+    expect(screen.getByLabelText('После: Масштаб')).toHaveTextContent('100%')
   })
 })

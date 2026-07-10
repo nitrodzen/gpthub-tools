@@ -45,7 +45,8 @@ const MAX_ZOOM = 4
 
 export function ZoomPane({ label, src, checkerboard, copy }: { label: string; src: string; checkerboard: boolean; copy: ReturnType<typeof getCopy> }) {
   const viewport = useRef<HTMLDivElement>(null)
-  const drag = useRef<{ startX: number; startY: number; originX: number; originY: number } | null>(null)
+  const drag = useRef<{ startX: number; startY: number; originX: number; originY: number; moved: boolean } | null>(null)
+  const suppressClick = useRef(false)
   const [{ zoom, position }, setView] = useState({ zoom: 1, position: { x: 0, y: 0 } })
 
   useEffect(() => {
@@ -72,6 +73,8 @@ export function ZoomPane({ label, src, checkerboard, copy }: { label: string; sr
     setView((current) => ({ ...current, position: clampPosition({ x: current.position.x + x, y: current.position.y + y }, current.zoom) }))
   }, [clampPosition])
 
+  const toggleZoom = () => setZoomLevel(zoom === 1 ? 2 : 1)
+
   useEffect(() => {
     const element = viewport.current
     if (!element) return
@@ -85,24 +88,36 @@ export function ZoomPane({ label, src, checkerboard, copy }: { label: string; sr
 
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (zoom === 1) return
-    drag.current = { startX: event.clientX, startY: event.clientY, originX: position.x, originY: position.y }
+    drag.current = { startX: event.clientX, startY: event.clientY, originX: position.x, originY: position.y, moved: false }
     event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (!drag.current) return
+    const distanceX = event.clientX - drag.current.startX
+    const distanceY = event.clientY - drag.current.startY
+    if (Math.abs(distanceX) > 3 || Math.abs(distanceY) > 3) drag.current.moved = true
     setView((current) => ({
       ...current,
       position: clampPosition({
-        x: drag.current!.originX + event.clientX - drag.current!.startX,
-        y: drag.current!.originY + event.clientY - drag.current!.startY,
+        x: drag.current!.originX + distanceX,
+        y: drag.current!.originY + distanceY,
       }, current.zoom),
     }))
   }
 
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
+    suppressClick.current = Boolean(drag.current?.moved)
     drag.current = null
     if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+  }
+
+  const onClick = () => {
+    if (suppressClick.current) {
+      suppressClick.current = false
+      return
+    }
+    toggleZoom()
   }
 
   const onKeyDown = (event: ReactKeyboardEvent<HTMLDivElement>) => {
@@ -110,6 +125,7 @@ export function ZoomPane({ label, src, checkerboard, copy }: { label: string; sr
     const directions: Record<string, [number, number]> = {
       ArrowLeft: [-distance, 0], ArrowRight: [distance, 0], ArrowUp: [0, -distance], ArrowDown: [0, distance],
     }
+    if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); toggleZoom(); return }
     if (event.key === '+' || event.key === '=') { event.preventDefault(); setZoomLevel(zoom + ZOOM_STEP); return }
     if (event.key === '-') { event.preventDefault(); setZoomLevel(zoom - ZOOM_STEP); return }
     if (event.key === '0') { event.preventDefault(); setZoomLevel(1); return }
@@ -133,14 +149,16 @@ export function ZoomPane({ label, src, checkerboard, copy }: { label: string; sr
       <div
         ref={viewport}
         className={`zoom-viewport ${zoom > 1 ? 'is-zoomed' : ''}`}
-        role="region"
+        role="button"
         tabIndex={0}
         aria-label={`${label}: ${copy.zoomLevel} ${Math.round(zoom * 100)}%`}
+        aria-pressed={zoom > 1}
         style={{ touchAction: zoom > 1 ? 'none' : 'pan-y' }}
         onPointerDown={onPointerDown}
         onPointerMove={onPointerMove}
         onPointerUp={onPointerUp}
         onPointerCancel={onPointerUp}
+        onClick={onClick}
         onKeyDown={onKeyDown}
       >
         <img src={src} alt={label} draggable={false} style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${zoom})` }} />
