@@ -1,6 +1,6 @@
 basicsr==1.4.2
 fastapi==0.115.11
-numpy==1.24.1
+numpy==2.5.1
 Pillow==11.3.0
 pillow-heif==1.1.0
 python-multipart==0.0.20
