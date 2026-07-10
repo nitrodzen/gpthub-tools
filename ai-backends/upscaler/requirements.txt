@@ -1,5 +1,5 @@
 basicsr==1.4.2
-fastapi==0.115.11
+fastapi==0.139.0
 numpy==1.24.1
 Pillow==11.3.0
 pillow-heif==1.1.0
