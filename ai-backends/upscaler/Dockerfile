@@ -13,6 +13,11 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && pip install -r requirements.txt
 
+# Real-ESRGAN expands its complete tiled output to float32 before moving it to
+# system RAM. For large images that creates an unnecessary second GPU-sized
+# allocation. Move the FP16 tensor first, then expand it on the CPU.
+RUN python -c "from importlib.util import find_spec; from pathlib import Path; spec=find_spec('realesrgan'); path=Path(next(iter(spec.submodule_search_locations))) / 'utils.py'; source=path.read_text(); old='.data.squeeze().float().cpu().clamp_(0, 1).numpy()'; new='.data.squeeze().cpu().float().clamp_(0, 1).numpy()'; assert old in source; path.write_text(source.replace(old, new))"
+
 COPY app ./app
 RUN mkdir -p /models && chown -R app:app /app /models
 

@@ -19,7 +19,13 @@ from redis.asyncio import Redis
 
 from .config import settings
 from .models import AI_OPERATIONS, ErrorCode, JobCreated, JobFailure, JobStatus, JobView, Operation
-from .security import IMAGE_EXTENSIONS, allowed_extensions, scan_file, validate_signature
+from .security import (
+    IMAGE_EXTENSIONS,
+    allowed_extensions,
+    scan_file,
+    validate_signature,
+    validate_upscale_dimensions,
+)
 from .storage import (
     authorized,
     create_job_directory,
@@ -201,6 +207,12 @@ async def create_job(
             )
             total += written
             await asyncio.to_thread(validate_signature, stored_path, extension)
+            if operation is Operation.UPSCALE:
+                await asyncio.to_thread(
+                    validate_upscale_dimensions,
+                    stored_path,
+                    parsed_options.get("scale", 2),
+                )
             await scan_file(stored_path)
             stored.append(
                 {

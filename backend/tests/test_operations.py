@@ -1,5 +1,7 @@
+from io import BytesIO
 from pathlib import Path
 
+import httpx
 import pikepdf
 import pytest
 from PIL import Image
@@ -12,7 +14,9 @@ from app.operations import (
     parse_ranges,
     pdf_has_text_layer,
     split_pdf,
+    validated_upscale_png,
 )
+from app.security import validate_upscale_dimensions
 
 
 def make_image(path: Path, color: str = "red") -> None:
@@ -73,3 +77,27 @@ def test_blank_pdf_has_no_text_layer(tmp_path: Path) -> None:
     source = tmp_path / "scan.pdf"
     make_pdf(source, 2)
     assert pdf_has_text_layer(source) is False
+
+
+def test_upscale_response_must_be_a_real_png() -> None:
+    error = httpx.Response(
+        200,
+        json={"status_code": 500, "detail": "CUDA out of memory"},
+    )
+    with pytest.raises(JobFailure) as failure:
+        validated_upscale_png(error, (1280, 720))
+    assert failure.value.code == ErrorCode.IMAGE_TOO_LARGE
+
+    buffer = BytesIO()
+    Image.new("RGB", (1280, 720), "white").save(buffer, "PNG")
+    response = httpx.Response(200, content=buffer.getvalue(), headers={"content-type": "image/png"})
+    assert validated_upscale_png(response, (1280, 720)).startswith(b"\x89PNG")
+
+
+def test_upscale_dimensions_are_limited_before_queueing(tmp_path: Path, monkeypatch) -> None:
+    source = tmp_path / "large.png"
+    make_image(source)
+    monkeypatch.setattr("app.security.MAX_UPSCALE_OUTPUT_PIXELS", 100)
+    with pytest.raises(JobFailure) as failure:
+        validate_upscale_dimensions(source, 4)
+    assert failure.value.code == ErrorCode.IMAGE_TOO_LARGE

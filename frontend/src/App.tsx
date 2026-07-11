@@ -7,6 +7,34 @@ type ConvertMode = 'images' | 'documents' | 'pdf'
 type PdfAction = 'pdf-merge' | 'pdf-split' | 'images-to-pdf' | 'pdf-to-images'
 type Theme = 'light' | 'dark'
 
+const MAX_UPSCALE_OUTPUT_PIXELS = 420_000_000
+
+async function imagePixelCount(file: File) {
+  const bitmap = await createImageBitmap(file)
+  const pixels = bitmap.width * bitmap.height
+  bitmap.close()
+  return pixels
+}
+
+export function estimateDuration(operation: Operation, scale: number, fileCount: number, inputPixels = 0) {
+  const count = Math.max(1, fileCount)
+  const megapixels = inputPixels / 1_000_000
+  if (operation === 'upscale') return Math.round((scale === 4 ? 90 * count + megapixels * 30 : 60 * count + megapixels * 12))
+  if (operation === 'remove-background') return 60 * count
+  if (operation === 'document-convert') return 45 * count
+  if (operation === 'pdf-to-images') return 75
+  return Math.max(8, 8 * count)
+}
+
+export function formatDuration(seconds: number, language: Language) {
+  const rounded = Math.max(0, Math.ceil(seconds))
+  if (rounded < 60) return `${rounded} ${language === 'ru' ? 'сек' : 'sec'}`
+  const minutes = Math.floor(rounded / 60)
+  const remainder = rounded % 60
+  if (!remainder) return `${minutes} ${language === 'ru' ? 'мин' : 'min'}`
+  return `${minutes} ${language === 'ru' ? 'мин' : 'min'} ${remainder} ${language === 'ru' ? 'сек' : 'sec'}`
+}
+
 const routeForTab: Record<Tab, string> = {
   upscale: '/upscale',
   remove: '/remove-background',
@@ -161,7 +189,9 @@ export function ZoomPane({ label, src, checkerboard, copy }: { label: string; sr
         onClick={onClick}
         onKeyDown={onKeyDown}
       >
-        <img src={src} alt={label} draggable={false} style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${zoom})` }} />
+        <div className="zoom-media" style={{ transform: `translate3d(${position.x}px, ${position.y}px, 0) scale(${zoom})` }}>
+          <img src={src} alt={label} draggable={false} />
+        </div>
       </div>
     </section>
   )
@@ -266,7 +296,13 @@ export default function App() {
   const [job, setJob] = useState<Job | null>(null)
   const [error, setError] = useState<{ message: string; code?: string } | null>(null)
   const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [submitting, setSubmitting] = useState(false)
+  const [submittedAt, setSubmittedAt] = useState<number | null>(null)
+  const [inputPixels, setInputPixels] = useState(0)
+  const [clock, setClock] = useState(Date.now())
+  const submittingRef = useRef(false)
   const copy = getCopy(language)
+  const busy = submitting || Boolean(capability && (!job || job.status === 'queued' || job.status === 'running'))
 
   const originalUrl = useMemo(() => {
     if (files.length !== 1 || !files[0].type.startsWith('image/')) return null
@@ -277,6 +313,12 @@ export default function App() {
   useEffect(() => () => { if (resultUrl) URL.revokeObjectURL(resultUrl) }, [resultUrl])
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('gpthub-theme', theme) }, [theme])
   useEffect(() => { document.documentElement.lang = language; localStorage.setItem('gpthub-language', language) }, [language])
+  useEffect(() => {
+    if (!busy) return
+    setClock(Date.now())
+    const timer = window.setInterval(() => setClock(Date.now()), 1000)
+    return () => window.clearInterval(timer)
+  }, [busy])
 
   useEffect(() => {
     if (!capability) return
@@ -323,6 +365,10 @@ export default function App() {
     setCapability(null)
     setJob(null)
     setError(null)
+    setSubmitting(false)
+    submittingRef.current = false
+    setSubmittedAt(null)
+    setInputPixels(0)
     if (resultUrl) URL.revokeObjectURL(resultUrl)
     setResultUrl(null)
   }
@@ -332,6 +378,8 @@ export default function App() {
     setError(null)
     setJob(null)
     setCapability(null)
+    setSubmittedAt(null)
+    setInputPixels(0)
     if (resultUrl) URL.revokeObjectURL(resultUrl)
     setResultUrl(null)
   }
@@ -359,8 +407,11 @@ export default function App() {
   }, [tab, mode, pdfAction])
 
   const submit = async () => {
+    if (submittingRef.current || busy) return
     if (!files.length) return setError({ message: copy.noFiles })
     if (operation === 'pdf-merge' && files.length < 2) return setError({ message: copy.needTwoPdfs })
+    submittingRef.current = true
+    setSubmitting(true)
     setError(null)
     setJob(null)
     const options: Record<string, unknown> = {}
@@ -371,10 +422,35 @@ export default function App() {
     if (operation === 'images-to-pdf') Object.assign(options, { pageSize, orientation, margin })
     if (operation === 'pdf-to-images') Object.assign(options, { format, quality, dpi })
     try {
-      setCapability(await createJob(operation, files, options))
+      let pixels = 0
+      if (operation === 'upscale') {
+        for (const file of files) {
+          let filePixels = 0
+          try {
+            filePixels = await imagePixelCount(file)
+          } catch {
+            continue
+          }
+          pixels += filePixels
+          if (filePixels * scale * scale > MAX_UPSCALE_OUTPUT_PIXELS) {
+            const problem = new Error('The image is too large for the selected upscale factor') as Error & { code?: string }
+            problem.code = 'IMAGE_TOO_LARGE'
+            throw problem
+          }
+        }
+      }
+      const started = Date.now()
+      setInputPixels(pixels)
+      setSubmittedAt(started)
+      setClock(started)
+      const created = await createJob(operation, files, options)
+      setCapability(created)
     } catch (caught) {
       const problem = caught as Error & { code?: string }
       setError({ message: problem.message, code: problem.code })
+    } finally {
+      submittingRef.current = false
+      setSubmitting(false)
     }
   }
 
@@ -397,7 +473,26 @@ export default function App() {
   const title = tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
   const lead = tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
   const localizedError = error?.code ? copy.errors[error.code] || error.message : error?.message
-  const busy = Boolean(capability && (!job || job.status === 'queued' || job.status === 'running'))
+  const startedAt = job?.createdAt ? Date.parse(job.createdAt) : submittedAt
+  const elapsedSeconds = startedAt ? Math.max(0, Math.floor((clock - startedAt) / 1000)) : 0
+  const estimatedSeconds = estimateDuration(operation, scale, files.length, inputPixels)
+  const progressPercent = job?.status === 'succeeded'
+    ? 100
+    : submitting
+      ? 4
+      : job?.status === 'queued' || !job
+        ? 8
+        : Math.min(94, Math.round(12 + (elapsedSeconds / estimatedSeconds) * 82))
+  const remainingSeconds = Math.max(0, estimatedSeconds - elapsedSeconds)
+  const progressMeta = job?.status === 'running'
+    ? remainingSeconds > 0
+      ? `~${progressPercent}% · ${copy.remaining} ${formatDuration(remainingSeconds, language)} · ${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
+      : `~${progressPercent}% · ${copy.almostDone} · ${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
+    : job?.status === 'queued'
+      ? `${copy.waitingToStart} · ${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
+      : submitting
+        ? copy.uploading
+        : ''
 
   return (
     <div className="app-shell">
@@ -477,12 +572,12 @@ export default function App() {
               {operation === 'images-to-pdf' && <><div className="field"><label>{copy.pageSize}</label><select value={pageSize} onChange={(event) => setPageSize(event.target.value)}><option value="a4">{copy.a4}</option><option value="original">{copy.original}</option></select></div><div className="field"><label>{copy.orientation}</label><select value={orientation} onChange={(event) => setOrientation(event.target.value)}><option value="auto">{copy.auto}</option><option value="portrait">{copy.portrait}</option><option value="landscape">{copy.landscape}</option></select></div><div className="field"><label>{copy.margin}<output>{margin}</output></label><input type="range" min="0" max="30" value={margin} onChange={(event) => setMargin(Number(event.target.value))} /></div></>}
               {operation === 'pdf-to-images' && <div className="field"><label><span className="label-with-hint">{copy.dpi}<Hint text={dpiHint} /></span></label><div className="segmented"><button className={dpi === 150 ? 'active' : ''} onClick={() => setDpi(150)}>150 DPI</button><button className={dpi === 300 ? 'active' : ''} onClick={() => setDpi(300)}>300 DPI</button></div></div>}
               {mode === 'documents' && <div className="notice"><span>i</span><p>{copy.documentHelp}<br /><small>{language === 'ru' ? 'Сканированные PDF без текстового слоя не конвертируются.' : 'Scanned PDFs without a text layer cannot be converted.'}</small></p></div>}
-              <button className="primary-button" onClick={() => void submit()} disabled={busy || files.length === 0}><SparkIcon />{busy ? copy.processing : copy.process}</button>
+              <button className="primary-button" onClick={() => void submit()} disabled={busy || files.length === 0} aria-busy={busy}><SparkIcon />{busy ? copy.processing : copy.process}</button>
             </div>
           </div>
 
           {(busy || job || localizedError) && <div className={`job-panel ${job?.status === 'succeeded' ? 'success' : localizedError ? 'failure' : ''}`}>
-            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div></> : <><span className="status-icon">{job?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{job?.status === 'succeeded' ? copy.ready : job?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress"><span style={{ width: job?.status === 'succeeded' ? '100%' : job?.status === 'running' ? '68%' : '22%' }} /></div>{job?.resultName && <small>{job.resultName}</small>}</div><div className="job-actions">{job?.status === 'succeeded' ? <button className="download-button" onClick={() => void download()}>{copy.download} ↓</button> : <button className="text-button" onClick={() => void cancel()}>{copy.cancel}</button>}</div></>}
+            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div></> : <><span className="status-icon">{job?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{job?.status === 'succeeded' ? copy.ready : submitting ? copy.uploading : job?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{job?.resultName && <small>{job.resultName}</small>}</div><div className="job-actions">{job?.status === 'succeeded' ? <button className="download-button" onClick={() => void download()}>{copy.download} ↓</button> : capability ? <button className="text-button" onClick={() => void cancel()}>{copy.cancel}</button> : null}</div></>}
           </div>}
 
           {originalUrl && resultUrl && <div className="comparison">

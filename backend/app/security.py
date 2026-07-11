@@ -18,6 +18,7 @@ Image.MAX_IMAGE_PIXELS = settings.max_image_pixels
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".webp", ".heic", ".heif", ".tif", ".tiff", ".bmp"}
 DOCUMENT_EXTENSIONS = {".doc", ".docx", ".odt", ".rtf", ".pdf"}
 PDF_ONLY = {".pdf"}
+MAX_UPSCALE_OUTPUT_PIXELS = 420_000_000
 
 
 def allowed_extensions(operation: Operation) -> set[str]:
@@ -33,6 +34,29 @@ def allowed_extensions(operation: Operation) -> set[str]:
     if operation in {Operation.PDF_MERGE, Operation.PDF_SPLIT, Operation.PDF_TO_IMAGES}:
         return PDF_ONLY
     return set()
+
+
+def validate_upscale_dimensions(path: Path, scale: int | str) -> None:
+    try:
+        scale = int(scale)
+    except (TypeError, ValueError) as exc:
+        raise JobFailure(ErrorCode.INVALID_FILE, "Upscale factor must be 2 or 4") from exc
+    if scale not in {2, 4}:
+        raise JobFailure(ErrorCode.INVALID_FILE, "Upscale factor must be 2 or 4")
+    with Image.open(path) as image:
+        width, height = image.size
+    output_pixels = width * height * scale * scale
+    if output_pixels > MAX_UPSCALE_OUTPUT_PIXELS:
+        raise JobFailure(
+            ErrorCode.IMAGE_TOO_LARGE,
+            "The image is too large for the selected upscale factor",
+            {
+                "width": width,
+                "height": height,
+                "scale": scale,
+                "maxOutputPixels": MAX_UPSCALE_OUTPUT_PIXELS,
+            },
+        )
 
 
 def validate_signature(path: Path, extension: str) -> None:

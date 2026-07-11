@@ -82,6 +82,50 @@ def ensure_result_limit(path: Path) -> None:
         raise JobFailure(ErrorCode.RESULT_TOO_LARGE, "The generated result is too large")
 
 
+def validated_upscale_png(response: httpx.Response, expected_size: tuple[int, int]) -> bytes:
+    content_type = response.headers.get("content-type", "").lower()
+    looks_like_json = "json" in content_type or response.content.lstrip().startswith(b"{")
+    if response.status_code >= 400 or looks_like_json:
+        detail = ""
+        if looks_like_json:
+            try:
+                detail = str(response.json().get("detail", ""))
+            except Exception:
+                pass
+        code = (
+            ErrorCode.IMAGE_TOO_LARGE
+            if "out of memory" in detail.lower()
+            else ErrorCode.UPSTREAM_ERROR
+        )
+        message = (
+            "The image is too large for the upscaling service"
+            if code is ErrorCode.IMAGE_TOO_LARGE
+            else "The upscaling service returned an error"
+        )
+        raise JobFailure(code, message)
+
+    content = response.content
+    is_png = (
+        len(content) >= 32
+        and content.startswith(b"\x89PNG\r\n\x1a\n")
+        and content[12:16] == b"IHDR"
+        and content[-8:-4] == b"IEND"
+    )
+    if not is_png:
+        raise JobFailure(
+            ErrorCode.UPSTREAM_ERROR,
+            "The upscaling service returned invalid image data",
+        )
+    actual_size = (int.from_bytes(content[16:20], "big"), int.from_bytes(content[20:24], "big"))
+    if actual_size != expected_size:
+        raise JobFailure(
+            ErrorCode.UPSTREAM_ERROR,
+            "The upscaling service returned an image with unexpected dimensions",
+            {"expected": list(expected_size), "actual": list(actual_size)},
+        )
+    return content
+
+
 def convert_images(files: list[dict[str, Any]], output_dir: Path, options: dict[str, Any]) -> Path:
     fmt = str(options.get("format", "webp")).lower()
     if fmt not in {"jpg", "jpeg", "png", "webp"}:
@@ -119,6 +163,9 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
     timeout = httpx.Timeout(settings.job_timeout_seconds, connect=30)
     async with httpx.AsyncClient(timeout=timeout, follow_redirects=False) as client:
         for index, item in enumerate(files, 1):
+            with Image.open(item["path"]) as source_image:
+                oriented = ImageOps.exif_transpose(source_image)
+                expected_size = (oriented.width * scale, oriented.height * scale)
             with Path(item["path"]).open("rb") as source:
                 response = await client.post(
                     settings.upscale_url,
@@ -131,12 +178,8 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
                     },
                     data={"scale": str(scale), "format": upstream_format},
                 )
-            if response.status_code >= 400:
-                raise JobFailure(
-                    ErrorCode.UPSTREAM_ERROR, "The upscaling service returned an error"
-                )
             raw = output_dir / f"upscaled_{clean_stem(item['original'])}_{index}.png"
-            raw.write_bytes(response.content)
+            raw.write_bytes(validated_upscale_png(response, expected_size))
             if fmt != "png":
                 destination = output_dir / (
                     f"upscaled_{clean_stem(item['original'])}_{index}{image_extension(fmt)}"

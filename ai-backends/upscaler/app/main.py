@@ -28,6 +28,7 @@ def env_int(name: str, default: int) -> int:
 
 MAX_UPLOAD_BYTES: Final = env_int("MAX_UPLOAD_BYTES", 50 * 1024 * 1024)
 MAX_INPUT_PIXELS: Final = env_int("MAX_INPUT_PIXELS", 100_000_000)
+MAX_OUTPUT_PIXELS: Final = env_int("MAX_OUTPUT_PIXELS", 420_000_000)
 TILE_SIZE: Final = env_int("TILE_SIZE", 512)
 MODEL_DIR: Final = Path(os.getenv("MODEL_DIR", "/models"))
 MODEL_FILES: Final = {
@@ -137,8 +138,12 @@ async def upscale(
         raise HTTPException(status_code=413, detail="Image exceeds the upload limit")
 
     image = decode_image(raw)
+    if image.width * image.height * scale * scale > MAX_OUTPUT_PIXELS:
+        raise HTTPException(status_code=413, detail="Image is too large for the selected scale")
     try:
         async with UPSCALE_LOCK:
+            if torch.cuda.is_available():
+                torch.cuda.empty_cache()
             output, _ = await asyncio.to_thread(
                 UPSCALERS[scale].enhance,
                 np.array(image),

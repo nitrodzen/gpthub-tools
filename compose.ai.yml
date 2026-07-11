@@ -32,6 +32,7 @@ services:
       MODEL_DIR: /models
       MAX_UPLOAD_BYTES: 52428800
       MAX_INPUT_PIXELS: 100000000
+      MAX_OUTPUT_PIXELS: 420000000
       TILE_SIZE: 512
     volumes:
       - ./data/ai-models/realesrgan:/models:ro
@@ -43,7 +44,7 @@ services:
       - /tmp:size=512m,mode=1777
     security_opt:
       - no-new-privileges:true
-    mem_limit: 8g
+    mem_limit: 16g
     cpus: 4.0
     gpus: all
     healthcheck:
