@@ -180,19 +180,20 @@ export function ZoomPane({ label, src, checkerboard, copy }: { label: string; sr
   const onPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     if (zoom === 1) return
     drag.current = { startX: event.clientX, startY: event.clientY, originX: position.x, originY: position.y, moved: false }
-    event.currentTarget.setPointerCapture(event.pointerId)
+    if (event.currentTarget.setPointerCapture) event.currentTarget.setPointerCapture(event.pointerId)
   }
 
   const onPointerMove = (event: ReactPointerEvent<HTMLDivElement>) => {
-    if (!drag.current) return
-    const distanceX = event.clientX - drag.current.startX
-    const distanceY = event.clientY - drag.current.startY
-    if (Math.abs(distanceX) > 3 || Math.abs(distanceY) > 3) drag.current.moved = true
+    const activeDrag = drag.current
+    if (!activeDrag) return
+    const distanceX = event.clientX - activeDrag.startX
+    const distanceY = event.clientY - activeDrag.startY
+    if (Math.abs(distanceX) > 3 || Math.abs(distanceY) > 3) activeDrag.moved = true
     setView((current) => ({
       ...current,
       position: clampPosition({
-        x: drag.current!.originX + distanceX,
-        y: drag.current!.originY + distanceY,
+        x: activeDrag.originX + distanceX,
+        y: activeDrag.originY + distanceY,
       }, current.zoom),
     }))
   }
@@ -200,7 +201,7 @@ export function ZoomPane({ label, src, checkerboard, copy }: { label: string; sr
   const onPointerUp = (event: ReactPointerEvent<HTMLDivElement>) => {
     suppressClick.current = Boolean(drag.current?.moved)
     drag.current = null
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId)
+    if (event.currentTarget.hasPointerCapture?.(event.pointerId)) event.currentTarget.releasePointerCapture?.(event.pointerId)
   }
 
   const onClick = () => {

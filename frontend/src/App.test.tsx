@@ -43,6 +43,12 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'После: Масштаб 200%' }))
     expect(screen.getByLabelText('После: Масштаб')).toHaveTextContent('100%')
     expect(screen.getByAltText('До').parentElement).toHaveClass('zoom-media')
+
+    const beforeViewport = screen.getByRole('button', { name: 'До: Масштаб 125%' })
+    fireEvent.pointerDown(beforeViewport, { pointerId: 1, clientX: 100, clientY: 100 })
+    fireEvent.pointerMove(beforeViewport, { pointerId: 1, clientX: 132, clientY: 116 })
+    fireEvent.pointerUp(beforeViewport, { pointerId: 1, clientX: 132, clientY: 116 })
+    expect(screen.getByLabelText('До: Масштаб')).toHaveTextContent('125%')
   })
 
   it('locks submission immediately and exposes readable ETA helpers', async () => {
