@@ -87,6 +87,49 @@ describe('App', () => {
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow')
   })
 
+  it('disables cancellation while the request is in flight', async () => {
+    apiMocks.createJob.mockResolvedValue({
+      jobId: 'job-cancel', token: 'capability-token-123456789', expiresAt: '2026-07-11T03:00:00Z',
+    })
+    apiMocks.getJob.mockResolvedValue({
+      jobId: 'job-cancel', operation: 'upscale', status: 'running', progress: 0, total: 1,
+      createdAt: new Date().toISOString(), expiresAt: '2026-07-11T03:00:00Z',
+    })
+    let completeCancellation: () => void = () => undefined
+    apiMocks.cancelJob.mockReturnValue(new Promise<void>((resolve) => { completeCancellation = resolve }))
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['image'], 'photo.png', { type: 'image/png' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+    expect(await screen.findByRole('button', { name: 'Отменить' })).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Отменить' }))
+    expect(screen.getByRole('button', { name: 'Отменяем задание…' })).toBeDisabled()
+    expect(apiMocks.cancelJob).toHaveBeenCalledTimes(1)
+
+    completeCancellation()
+    await waitFor(() => expect(screen.queryByRole('button', { name: 'Отменяем задание…' })).not.toBeInTheDocument())
+  })
+
+  it('keeps the task available when cancellation fails', async () => {
+    apiMocks.createJob.mockResolvedValue({
+      jobId: 'job-cancel-error', token: 'capability-token-123456789', expiresAt: '2026-07-11T03:00:00Z',
+    })
+    apiMocks.getJob.mockResolvedValue({
+      jobId: 'job-cancel-error', operation: 'upscale', status: 'running', progress: 0, total: 1,
+      createdAt: new Date().toISOString(), expiresAt: '2026-07-11T03:00:00Z',
+    })
+    apiMocks.cancelJob.mockRejectedValue(new Error('Cancellation temporarily failed'))
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['image'], 'photo.png', { type: 'image/png' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+    fireEvent.click(await screen.findByRole('button', { name: 'Отменить' }))
+
+    expect(await screen.findByText('Cancellation temporarily failed')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: 'Отменить' })).toBeInTheDocument()
+  })
+
   it('shows one result preview for upscaling and highlights a completed job', async () => {
     apiMocks.createJob.mockResolvedValue({
       jobId: 'job-ready', token: 'capability-token-123456789', expiresAt: '2026-07-11T03:00:00Z',
@@ -155,5 +198,12 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Увеличить: готово: 1' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Увеличить' })).toBeInTheDocument())
     expect(screen.getByText('Результат готов')).toBeInTheDocument()
+  })
+
+  it('includes the support email in the footer', () => {
+    render(<App />)
+    expect(screen.getByRole('link', { name: 'HELP / У меня есть вопрос или проблема' })).toHaveAttribute(
+      'href', 'mailto:support@gpthub.ru?subject=GPTHub%20Tools',
+    )
   })
 })

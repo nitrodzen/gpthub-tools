@@ -10,6 +10,9 @@ x-backend: &backend
   environment: &backend-env
     REDIS_URL: redis://redis:6379/0
     JOBS_ROOT: /data/jobs
+    METRICS_DB_PATH: /data/metrics/metrics.sqlite3
+    METRICS_API_KEY: ${METRICS_API_KEY:-}
+    METRICS_RETENTION_DAYS: ${METRICS_RETENTION_DAYS:-365}
     PUBLIC_BASE_URL: ${PUBLIC_BASE_URL:-http://localhost:9080}
     APP_SECRET: ${APP_SECRET:-local-development-secret-change-me}
     APP_VERSION: ${APP_VERSION:-dev}
@@ -20,6 +23,7 @@ x-backend: &backend
     MAX_ACTIVE_JOBS_PER_IP: ${MAX_ACTIVE_JOBS_PER_IP:-3}
   volumes:
     - ./data/jobs:/data/jobs
+    - ./data/metrics:/data/metrics
   networks:
     - internal
   restart: unless-stopped

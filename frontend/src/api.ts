@@ -56,8 +56,9 @@ export async function fetchResult(capability: JobCapability) {
 }
 
 export async function cancelJob(capability: JobCapability) {
-  await fetch(`/api/jobs/${capability.jobId}`, {
+  const response = await fetch(`/api/jobs/${capability.jobId}`, {
     method: 'DELETE',
     headers: { 'X-Capability-Token': capability.token },
   })
+  if (!response.ok) throw await parseError(response)
 }

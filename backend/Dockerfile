@@ -17,7 +17,7 @@ COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && pip install -r requirements.txt
 COPY app ./app
 
-RUN mkdir -p /data/jobs /tmp/app-home && chown -R app:app /data /tmp/app-home /app
+RUN mkdir -p /data/jobs /data/metrics /tmp/app-home && chown -R app:app /data /tmp/app-home /app
 USER app
 
 EXPOSE 8000

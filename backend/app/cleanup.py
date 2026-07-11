@@ -7,6 +7,7 @@ import time
 from redis.asyncio import Redis
 
 from .config import settings
+from .metrics import metrics
 from .storage import release_active_job
 
 
@@ -47,7 +48,12 @@ async def cleanup_expired(redis: Redis) -> int:
 async def main() -> None:
     redis = Redis.from_url(settings.redis_url, decode_responses=True)
     settings.jobs_root.mkdir(parents=True, exist_ok=True)
+    try:
+        await metrics.initialize()
+    except Exception:
+        pass
     next_orphan_scan = 0.0
+    next_metrics_prune = 0.0
     try:
         while True:
             await cleanup_expired(redis)
@@ -55,6 +61,9 @@ async def main() -> None:
             if now >= next_orphan_scan:
                 await cleanup_once(redis)
                 next_orphan_scan = now + 300
+            if now >= next_metrics_prune:
+                await metrics.prune(time.time() - settings.metrics_retention_days * 86400)
+                next_metrics_prune = now + 86400
             await asyncio.sleep(1)
     finally:
         await redis.aclose()

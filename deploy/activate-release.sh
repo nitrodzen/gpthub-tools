@@ -10,9 +10,10 @@ case "$RELEASE_DIR" in
   *) echo "Release directory must be inside $APP_ROOT/releases" >&2; exit 2 ;;
 esac
 
-mkdir -p "$APP_ROOT/shared/data/jobs"
+mkdir -p "$APP_ROOT/shared/data/jobs" "$APP_ROOT/shared/data/metrics"
 chown -R 10001:10001 "$APP_ROOT/shared/data"
 chmod 700 "$APP_ROOT/shared/data/jobs"
+chmod 700 "$APP_ROOT/shared/data/metrics"
 
 if [[ ! -f "$APP_ROOT/shared/.env" ]]; then
   echo "Missing $APP_ROOT/shared/.env" >&2

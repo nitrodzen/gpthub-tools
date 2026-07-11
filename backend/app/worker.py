@@ -10,6 +10,7 @@ import traceback
 from arq.connections import RedisSettings
 
 from .config import settings
+from .metrics import metrics
 from .models import ErrorCode, JobFailure, JobStatus, Operation
 from .operations import execute, result_mime
 from .storage import delete_job_directory, release_active_job
@@ -76,6 +77,7 @@ async def run_operation(ctx: dict, job_id: str) -> None:
     }
     if not record or record.get("status") == JobStatus.CANCELLED.value:
         if record:
+            await metrics.record_terminal(job_id=job_id, status=JobStatus.CANCELLED)
             delete_job_directory(job_id)
             await release_active_job(redis, record["ip_hash"], job_id)
         return
@@ -83,10 +85,12 @@ async def run_operation(ctx: dict, job_id: str) -> None:
     root = settings.jobs_root / job_id
     try:
         await redis.hset(key, mapping={"status": JobStatus.RUNNING.value, "progress": "0"})
+        await metrics.record_started(job_id)
         operation = Operation(record["operation"])
         files = json.loads(record["files"])
         options = json.loads(record["options"])
         result = await execute(operation, files, root / "output", options)
+        result_bytes = result.stat().st_size
         stored = await store_terminal_state(
             redis,
             key,
@@ -101,6 +105,11 @@ async def run_operation(ctx: dict, job_id: str) -> None:
         if not stored:
             delete_job_directory(job_id)
             return
+        await metrics.record_terminal(
+            job_id=job_id,
+            status=JobStatus.SUCCEEDED,
+            result_bytes=result_bytes,
+        )
     except JobFailure as exc:
         stored = await store_terminal_state(
             redis,
@@ -114,6 +123,10 @@ async def run_operation(ctx: dict, job_id: str) -> None:
         )
         if not stored:
             delete_job_directory(job_id)
+        else:
+            await metrics.record_terminal(
+                job_id=job_id, status=JobStatus.FAILED, error_code=exc.code.value
+            )
     except Exception:
         traceback.print_exc()
         stored = await store_terminal_state(
@@ -127,6 +140,12 @@ async def run_operation(ctx: dict, job_id: str) -> None:
         )
         if not stored:
             delete_job_directory(job_id)
+        else:
+            await metrics.record_terminal(
+                job_id=job_id,
+                status=JobStatus.FAILED,
+                error_code=ErrorCode.INTERNAL_ERROR.value,
+            )
     finally:
         input_dir = root / "input"
         if input_dir.exists():

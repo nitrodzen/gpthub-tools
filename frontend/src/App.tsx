@@ -360,6 +360,7 @@ export default function App() {
   const [error, setError] = useState<FormError | null>(null)
   const [submitting, setSubmitting] = useState(false)
   const [submittingTab, setSubmittingTab] = useState<Tab | null>(null)
+  const [cancelling, setCancelling] = useState(false)
   const [clock, setClock] = useState(Date.now())
   const submittingRef = useRef(false)
   const trackedJobsRef = useRef<TrackedJobs>(trackedJobs)
@@ -643,15 +644,27 @@ export default function App() {
   }
 
   const cancel = async () => {
-    if (!visibleTrackedJob) return
-    await cancelJob(visibleTrackedJob.capability)
-    setTrackedJobs((jobs) => {
-      const removed = jobs[tab]
-      if (removed?.resultUrl) URL.revokeObjectURL(removed.resultUrl)
-      const { [tab]: _, ...remaining } = jobs
-      return remaining
-    })
-    resetForm()
+    if (!visibleTrackedJob || cancelling) return
+    const targetTab = tab
+    const targetJobId = visibleTrackedJob.capability.jobId
+    setCancelling(true)
+    setError(null)
+    try {
+      await cancelJob(visibleTrackedJob.capability)
+      setTrackedJobs((jobs) => {
+        const removed = jobs[targetTab]
+        if (!removed || removed.capability.jobId !== targetJobId) return jobs
+        if (removed.resultUrl) URL.revokeObjectURL(removed.resultUrl)
+        const { [targetTab]: _, ...remaining } = jobs
+        return remaining
+      })
+      resetForm()
+    } catch (caught) {
+      const problem = caught as Error & { code?: string }
+      setError({ message: problem.message || copy.cancelFailed, code: problem.code })
+    } finally {
+      setCancelling(false)
+    }
   }
 
   const title = tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
@@ -767,7 +780,7 @@ export default function App() {
           </div>
 
           {(isSubmittingHere || visibleBusy || visibleJob || localizedError) && <div className={`job-panel ${visibleJob?.status === 'succeeded' ? 'success' : localizedError ? 'failure' : ''}`}>
-            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div></> : <><span className="status-icon">{visibleJob?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{visibleJob?.status === 'succeeded' ? copy.ready : isSubmittingHere ? copy.uploading : visibleJob?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{visibleJob?.resultName && <small>{visibleJob.resultName}</small>}</div><div className="job-actions">{visibleJob?.status === 'succeeded' ? <button className="download-button is-ready" onClick={() => void download()}>{copy.download} ↓</button> : visibleTrackedJob ? <button className="text-button" onClick={() => void cancel()}>{copy.cancel}</button> : null}</div></>}
+            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div><div className="job-actions">{visibleTrackedJob && isRunning(visibleJob) ? <button className="cancel-button" onClick={() => void cancel()} disabled={cancelling}>{cancelling ? copy.cancelling : copy.cancel}</button> : null}</div></> : <><span className="status-icon">{visibleJob?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{visibleJob?.status === 'succeeded' ? copy.ready : cancelling ? copy.cancelling : isSubmittingHere ? copy.uploading : visibleJob?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{visibleJob?.resultName && <small>{visibleJob.resultName}</small>}</div><div className="job-actions">{visibleJob?.status === 'succeeded' ? <button className="download-button is-ready" onClick={() => void download()}>{copy.download} ↓</button> : visibleTrackedJob ? <button className="cancel-button" onClick={() => void cancel()} disabled={cancelling}>{cancelling ? copy.cancelling : copy.cancel}</button> : null}</div></>}
           </div>}
 
           {tab === 'upscale' && visibleTrackedJob?.resultUrl && <div className="result-preview">
@@ -792,7 +805,7 @@ export default function App() {
         <div className="privacy-note"><span>⌁</span><p>{copy.privacy}</p></div>
       </main>
 
-      <footer><span>© {new Date().getFullYear()} GPTHub Tools</span><a href="https://github.com/nitrodzen/gpthub-tools" target="_blank" rel="noreferrer">{copy.github} ↗</a></footer>
+      <footer><span>© {new Date().getFullYear()} GPTHub Tools</span><div><a href="mailto:support@gpthub.ru?subject=GPTHub%20Tools">{copy.support}</a><a href="https://github.com/nitrodzen/gpthub-tools" target="_blank" rel="noreferrer">{copy.github} ↗</a></div></footer>
     </div>
   )
 }

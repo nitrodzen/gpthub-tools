@@ -1,23 +1,28 @@
 from __future__ import annotations
 
 import asyncio
+import hmac
 import json
+import logging
 import os
 import shutil
+import sqlite3
 import time
 import uuid
 from contextlib import asynccontextmanager
+from datetime import UTC, date, datetime, timedelta
 from pathlib import Path
 from typing import Annotated
 
 from arq import create_pool
 from arq.connections import RedisSettings
-from fastapi import FastAPI, File, Form, Header, Request, UploadFile
+from fastapi import FastAPI, File, Form, Header, Query, Request, UploadFile
 from fastapi.exceptions import RequestValidationError
-from fastapi.responses import FileResponse, JSONResponse
+from fastapi.responses import FileResponse, JSONResponse, Response
 from redis.asyncio import Redis
 
 from .config import settings
+from .metrics import metrics
 from .models import AI_OPERATIONS, ErrorCode, JobCreated, JobFailure, JobStatus, JobView, Operation
 from .security import (
     IMAGE_EXTENSIONS,
@@ -39,6 +44,8 @@ from .storage import (
     reserve_active_job,
 )
 
+logger = logging.getLogger(__name__)
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -46,6 +53,10 @@ async def lifespan(app: FastAPI):
     app.state.redis = Redis.from_url(settings.redis_url, decode_responses=True)
     app.state.queue = await create_pool(RedisSettings.from_dsn(settings.redis_url))
     await app.state.redis.ping()
+    try:
+        await metrics.initialize()
+    except (OSError, sqlite3.Error) as exc:
+        logger.warning("Metrics store is unavailable during startup: %s", exc)
     yield
     await app.state.queue.close()
     await app.state.redis.aclose()
@@ -159,6 +170,85 @@ async def health(request: Request) -> dict:
     }
 
 
+def metrics_period(
+    from_value: str | None, to_value: str | None, bucket: str
+) -> tuple[date, date] | None:
+    if bucket not in {"hour", "day"}:
+        return None
+    try:
+        today = datetime.now(UTC).date()
+        to_date = date.fromisoformat(to_value) if to_value else today
+        from_date = date.fromisoformat(from_value) if from_value else to_date - timedelta(days=6)
+    except ValueError:
+        return None
+    days = (to_date - from_date).days + 1
+    if days < 1 or days > settings.metrics_retention_days:
+        return None
+    if bucket == "hour" and days > 31:
+        return None
+    return from_date, to_date
+
+
+async def metrics_live_snapshot(redis: Redis) -> dict[str, int | bool | str]:
+    try:
+        redis_ok = bool(await redis.ping())
+    except Exception:
+        redis_ok = False
+    workers = 0
+    if redis_ok:
+        async for _ in redis.scan_iter("worker-heartbeat:*"):
+            workers += 1
+    disk = shutil.disk_usage(settings.jobs_root)
+    return {
+        "status": "ok"
+        if redis_ok and workers >= settings.expected_workers and disk.free > settings.max_job_bytes
+        else "degraded",
+        "redis": redis_ok,
+        "workers": workers,
+        "expectedWorkers": settings.expected_workers,
+        "freeBytes": disk.free,
+    }
+
+
+@app.get("/api/metrics")
+async def get_metrics(
+    request: Request,
+    key: str | None = None,
+    from_value: Annotated[str | None, Query(alias="from")] = None,
+    to: str | None = None,
+    bucket: str = "day",
+):
+    headers = {"Cache-Control": "no-store"}
+    if not (
+        settings.metrics_api_key
+        and key
+        and hmac.compare_digest(key, settings.metrics_api_key)
+    ):
+        return Response(status_code=404, headers=headers)
+    period = metrics_period(from_value, to, bucket)
+    if not period:
+        return JSONResponse(
+            status_code=400,
+            headers=headers,
+            content={
+                "error": {"code": "INVALID_METRICS_PERIOD", "message": "Invalid metrics period"}
+            },
+        )
+    try:
+        payload = await metrics.report(from_date=period[0], to_date=period[1], bucket=bucket)
+    except (OSError, sqlite3.Error) as exc:
+        logger.warning("Metrics endpoint is unavailable: %s", exc)
+        return JSONResponse(
+            status_code=503,
+            headers=headers,
+            content={
+                "error": {"code": "METRICS_UNAVAILABLE", "message": "Metrics are unavailable"}
+            },
+        )
+    payload["live"] = await metrics_live_snapshot(request.app.state.redis)
+    return JSONResponse(content=payload, headers=headers)
+
+
 @app.post("/api/jobs/{operation}", response_model=JobCreated, status_code=202)
 async def create_job(
     request: Request,
@@ -168,24 +258,49 @@ async def create_job(
 ) -> JobCreated:
     redis: Redis = request.app.state.redis
     if not files:
+        await metrics.record_rejected(
+            operation=operation,
+            file_count=0,
+            input_bytes=0,
+            error_code=ErrorCode.INVALID_FILE.value,
+        )
         raise JobFailure(ErrorCode.INVALID_FILE, "At least one file is required")
     if len(files) > settings.max_files:
+        await metrics.record_rejected(
+            operation=operation,
+            file_count=len(files),
+            input_bytes=0,
+            error_code=ErrorCode.TOO_MANY_FILES.value,
+        )
         raise JobFailure(ErrorCode.TOO_MANY_FILES, "Too many files in one job")
     try:
         parsed_options = json.loads(options)
         if not isinstance(parsed_options, dict):
             raise ValueError
     except (json.JSONDecodeError, ValueError) as exc:
+        await metrics.record_rejected(
+            operation=operation,
+            file_count=len(files),
+            input_bytes=0,
+            error_code=ErrorCode.INVALID_FILE.value,
+        )
         raise JobFailure(ErrorCode.INVALID_FILE, "Job options must be a JSON object") from exc
 
     ip_hash = ip_digest(client_ip(request))
     job_id, token = new_capability()
     if not await reserve_active_job(redis, ip_hash, job_id):
+        await metrics.record_rejected(
+            operation=operation,
+            file_count=len(files),
+            input_bytes=0,
+            error_code=ErrorCode.ACTIVE_JOB_EXISTS.value,
+        )
         raise JobFailure(
             ErrorCode.ACTIVE_JOB_EXISTS, "Maximum concurrent jobs reached for this address"
         )
     stored: list[dict] = []
     total = 0
+    metrics_accepted = False
     try:
         await consume_rate(redis, ip_hash, operation, len(files))
         root = create_job_directory(job_id)
@@ -233,6 +348,13 @@ async def create_job(
             files=stored,
             options=parsed_options,
         )
+        await metrics.record_accepted(
+            job_id=job_id,
+            operation=operation,
+            file_count=len(stored),
+            input_bytes=total,
+        )
+        metrics_accepted = True
         queue_name = "ai" if operation in AI_OPERATIONS else "local"
         queued = await request.app.state.queue.enqueue_job(
             "run_operation",
@@ -248,7 +370,36 @@ async def create_job(
             status=JobStatus.QUEUED,
             expiresAt=record["expires_at"],
         )
+    except JobFailure as exc:
+        if metrics_accepted:
+            await metrics.record_terminal(
+                job_id=job_id, status=JobStatus.FAILED, error_code=exc.code.value
+            )
+        else:
+            await metrics.record_rejected(
+                operation=operation,
+                file_count=len(files),
+                input_bytes=total,
+                error_code=exc.code.value,
+            )
+        delete_job_directory(job_id)
+        await redis.delete(f"job:{job_id}")
+        await release_active_job(redis, ip_hash, job_id)
+        raise
     except Exception:
+        if metrics_accepted:
+            await metrics.record_terminal(
+                job_id=job_id,
+                status=JobStatus.FAILED,
+                error_code=ErrorCode.INTERNAL_ERROR.value,
+            )
+        else:
+            await metrics.record_rejected(
+                operation=operation,
+                file_count=len(files),
+                input_bytes=total,
+                error_code=ErrorCode.INTERNAL_ERROR.value,
+            )
         delete_job_directory(job_id)
         await redis.delete(f"job:{job_id}")
         await release_active_job(redis, ip_hash, job_id)
@@ -308,9 +459,12 @@ async def delete_job(
 ):
     redis: Redis = request.app.state.redis
     record = await authorized_job(redis, job_id, token)
+    if record["status"] in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}:
+        return None
     await redis.hset(f"job:{job_id}", mapping={"status": JobStatus.CANCELLED.value})
-    await release_active_job(redis, record["ip_hash"], job_id)
+    await metrics.record_terminal(job_id=job_id, status=JobStatus.CANCELLED)
     await redis.zrem("job-expirations", job_id)
     if record["status"] != JobStatus.RUNNING.value:
         delete_job_directory(job_id)
+        await release_active_job(redis, record["ip_hash"], job_id)
     return None

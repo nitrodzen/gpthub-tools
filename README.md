@@ -12,6 +12,7 @@ Public, bilingual file tools for [tools.gpthub.ru](https://tools.gpthub.ru): ima
 - Merge and split PDFs, create PDFs from images, and render PDF pages to PNG, JPEG, or WebP.
 - Process up to 20 files asynchronously with one-hour result retention.
 - Keep one task per top-level tool while switching tabs or reloading the page; only short-lived job metadata and its capability token are kept in the browser, never the uploaded file.
+- Export privacy-preserving operational and product metrics through a protected API. See [the metrics guide](docs/METRICS.md).
 
 ## Architecture
 
@@ -69,6 +70,8 @@ PYTHONPATH=. python -m pytest
 Copy `.env.example` to `.env` for overrides. Generate a unique `APP_SECRET` in production. The file is ignored by Git and must remain server-side. The public repository contains no production hostnames, private IPs, TLS material, model weights or runtime data.
 
 Uploads are limited by file size, aggregate job size, type, signature, pixel/page count, malware scan, per-IP rate limits, a maximum of three concurrent jobs per IP, and worker concurrency. Inputs are deleted after processing; results expire after 60 minutes.
+
+The optional metrics database stores only technical aggregates for 365 days. It contains no filenames, file contents, IP addresses, capability tokens, or job options.
 
 ## License
 
