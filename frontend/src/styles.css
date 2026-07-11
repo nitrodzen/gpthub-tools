@@ -68,8 +68,16 @@ main { width: min(1080px, calc(100% - 40px)); margin: 20px auto 0; position: rel
 .tabs { width: fit-content; margin: 0 auto; display: flex; gap: 5px; padding: 5px; border: 1px solid var(--line); background: var(--surface); border-radius: 16px; box-shadow: 0 10px 35px rgba(34, 44, 70, .07); backdrop-filter: blur(16px); }
 .tabs button { height: 45px; display: flex; align-items: center; gap: 8px; padding: 0 19px; border: 0; border-radius: 11px; background: transparent; color: var(--muted); cursor: pointer; font-size: 13px; font-weight: 700; transition: .2s ease; }
 .tabs button span { font-size: 17px; font-weight: 400; }
+.tabs button .tab-label { font: inherit; }
+.tabs button .tab-ready-badge { min-width: 20px; height: 20px; display: inline-grid; place-items: center; padding: 0 5px; border-radius: 999px; color: #fff; background: #087348; box-shadow: 0 0 0 3px color-mix(in srgb, var(--success), transparent 85%); font-size: 9px; font-weight: 850; line-height: 1; animation: tab-ready-pulse 1.8s ease-out infinite; }
 .tabs button:hover { color: var(--text); background: var(--surface-soft); }
 .tabs button.active { color: white; background: linear-gradient(135deg, var(--accent-dark), var(--accent)); box-shadow: 0 7px 18px rgba(80, 82, 220, .25); }
+.tabs button.active .tab-ready-badge { background: #0f8a58; }
+
+@keyframes tab-ready-pulse {
+  0%, 100% { box-shadow: 0 0 0 3px color-mix(in srgb, var(--success), transparent 85%); }
+  55% { box-shadow: 0 0 0 7px color-mix(in srgb, var(--success), transparent 100%); }
+}
 
 .hero-copy { max-width: 720px; margin: 66px auto 35px; text-align: center; }
 .eyebrow { display: inline-block; margin-bottom: 14px; color: var(--accent); font-size: 10px; font-weight: 850; letter-spacing: .22em; }
@@ -198,7 +206,8 @@ footer a:hover { color: var(--accent); }
   main { width: min(100% - 24px, 1080px); margin-top: 8px; }
   .tabs { width: 100%; }
   .tabs button { flex: 1; justify-content: center; padding: 0 8px; font-size: 11px; }
-  .tabs button span { display: none; }
+  .tabs button .tab-icon { display: none; }
+  .tabs button .tab-ready-badge { min-width: 18px; height: 18px; padding: 0 4px; font-size: 8px; }
   .hero-copy { margin: 46px auto 28px; }
   .hero-copy p { font-size: 14px; }
   .mode-switcher { grid-template-columns: 1fr; }
@@ -227,5 +236,5 @@ footer a:hover { color: var(--accent); }
 
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
-  .download-button.is-ready { animation: none; }
+  .download-button.is-ready, .tabs button .tab-ready-badge { animation: none; }
 }

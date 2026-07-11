@@ -12,7 +12,7 @@ from arq.connections import RedisSettings
 from .config import settings
 from .models import ErrorCode, JobFailure, JobStatus, Operation
 from .operations import execute, result_mime
-from .storage import delete_job_directory
+from .storage import delete_job_directory, release_active_job
 
 WORKER_ID = f"{os.getenv('ARQ_QUEUE', 'local')}:{socket.gethostname()}:{os.getpid()}"
 
@@ -77,7 +77,7 @@ async def run_operation(ctx: dict, job_id: str) -> None:
     if not record or record.get("status") == JobStatus.CANCELLED.value:
         if record:
             delete_job_directory(job_id)
-            await redis.delete(f"active:{record['ip_hash']}")
+            await release_active_job(redis, record["ip_hash"], job_id)
         return
     ip_hash = record["ip_hash"]
     root = settings.jobs_root / job_id
@@ -132,7 +132,7 @@ async def run_operation(ctx: dict, job_id: str) -> None:
         if input_dir.exists():
             for path in input_dir.iterdir():
                 path.unlink(missing_ok=True)
-        await redis.delete(f"active:{ip_hash}")
+        await release_active_job(redis, ip_hash, job_id)
         await heartbeat(ctx)
 
 

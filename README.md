@@ -11,6 +11,7 @@ Public, bilingual file tools for [tools.gpthub.ru](https://tools.gpthub.ru): ima
 - Convert text-based PDF files to DOCX. Scans without a text layer are rejected; OCR is intentionally out of scope.
 - Merge and split PDFs, create PDFs from images, and render PDF pages to PNG, JPEG, or WebP.
 - Process up to 20 files asynchronously with one-hour result retention.
+- Keep one task per top-level tool while switching tabs or reloading the page; only short-lived job metadata and its capability token are kept in the browser, never the uploaded file.
 
 ## Architecture
 
@@ -67,7 +68,7 @@ PYTHONPATH=. python -m pytest
 
 Copy `.env.example` to `.env` for overrides. Generate a unique `APP_SECRET` in production. The file is ignored by Git and must remain server-side. The public repository contains no production hostnames, private IPs, TLS material, model weights or runtime data.
 
-Uploads are limited by file size, aggregate job size, type, signature, pixel/page count, malware scan, per-IP rate limits, and worker concurrency. Inputs are deleted after processing; results expire after 60 minutes.
+Uploads are limited by file size, aggregate job size, type, signature, pixel/page count, malware scan, per-IP rate limits, a maximum of three concurrent jobs per IP, and worker concurrency. Inputs are deleted after processing; results expire after 60 minutes.
 
 ## License
 

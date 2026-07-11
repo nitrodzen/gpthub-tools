@@ -6,8 +6,26 @@ type Tab = 'upscale' | 'remove' | 'convert'
 type ConvertMode = 'images' | 'documents' | 'pdf'
 type PdfAction = 'pdf-merge' | 'pdf-split' | 'images-to-pdf' | 'pdf-to-images'
 type Theme = 'light' | 'dark'
+type FormError = { message: string; code?: string }
+type TrackedJob = {
+  capability: JobCapability
+  tab: Tab
+  operation: Operation
+  sourceFiles: File[]
+  fileCount: number
+  scale: number
+  submittedAt: number
+  inputPixels: number
+  job: Job | null
+  error: FormError | null
+  resultUrl: string | null
+  previewLoading: boolean
+  seen: boolean
+}
+type TrackedJobs = Partial<Record<Tab, TrackedJob>>
 
 const MAX_UPSCALE_OUTPUT_PIXELS = 420_000_000
+const TRACKED_JOBS_STORAGE_KEY = 'gpthub-tracked-jobs-v1'
 const READY_FAVICON = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#18a86b"/><path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="7" d="m17 33 10 10 21-23"/></svg>')}`
 
 function setFavicon(href: string) {
@@ -19,6 +37,39 @@ function setFavicon(href: string) {
     document.head.append(icon)
   }
   icon.href = href
+}
+
+function isRunning(job: Job | null) {
+  return !job || job.status === 'queued' || job.status === 'running'
+}
+
+function readTrackedJobs(): TrackedJobs {
+  try {
+    const stored = JSON.parse(localStorage.getItem(TRACKED_JOBS_STORAGE_KEY) || '{}') as Record<string, Partial<TrackedJob>>
+    const restored: TrackedJobs = {}
+    for (const tab of ['upscale', 'remove', 'convert'] as Tab[]) {
+      const entry = stored[tab]
+      if (!entry?.capability?.jobId || !entry.capability.token || !entry.operation || Date.parse(entry.capability.expiresAt || '') <= Date.now()) continue
+      restored[tab] = {
+        capability: entry.capability,
+        tab,
+        operation: entry.operation,
+        sourceFiles: [],
+        fileCount: entry.fileCount || 1,
+        scale: entry.scale || 2,
+        submittedAt: entry.submittedAt || Date.now(),
+        inputPixels: entry.inputPixels || 0,
+        job: entry.job || null,
+        error: entry.error || null,
+        resultUrl: null,
+        previewLoading: false,
+        seen: Boolean(entry.seen),
+      }
+    }
+    return restored
+  } catch {
+    return {}
+  }
 }
 
 async function imagePixelCount(file: File) {
@@ -304,28 +355,56 @@ export default function App() {
   const [orientation, setOrientation] = useState('auto')
   const [margin, setMargin] = useState(10)
   const [dpi, setDpi] = useState(150)
-  const [capability, setCapability] = useState<JobCapability | null>(null)
-  const [job, setJob] = useState<Job | null>(null)
-  const [error, setError] = useState<{ message: string; code?: string } | null>(null)
-  const [resultUrl, setResultUrl] = useState<string | null>(null)
+  const [trackedJobs, setTrackedJobs] = useState<TrackedJobs>(readTrackedJobs)
+  const [error, setError] = useState<FormError | null>(null)
   const [submitting, setSubmitting] = useState(false)
-  const [submittedAt, setSubmittedAt] = useState<number | null>(null)
-  const [inputPixels, setInputPixels] = useState(0)
+  const [submittingTab, setSubmittingTab] = useState<Tab | null>(null)
   const [clock, setClock] = useState(Date.now())
   const submittingRef = useRef(false)
+  const trackedJobsRef = useRef<TrackedJobs>(trackedJobs)
+  const tabRef = useRef<Tab>(tab)
+  const previewFetchesRef = useRef(new Set<string>())
   const initialTitleRef = useRef(document.title)
   const initialFaviconRef = useRef<string | null>(null)
-  const notifiedJobRef = useRef<string | null>(null)
+  const notifiedJobIdsRef = useRef(new Set<string>())
   const copy = getCopy(language)
-  const busy = submitting || Boolean(capability && (!job || job.status === 'queued' || job.status === 'running'))
+  const visibleTrackedJob = trackedJobs[tab]
+  const visibleJob = visibleTrackedJob?.job || null
+  const visibleBusy = Boolean(visibleTrackedJob && isRunning(visibleJob))
+  const busy = submitting || visibleBusy
+  const isSubmittingHere = submitting && submittingTab === tab
+  const hasRunningJobs = submitting || Object.values(trackedJobs).some((entry) => entry && isRunning(entry.job))
+  const completedJobs = Object.values(trackedJobs).filter((entry): entry is TrackedJob => Boolean(entry?.job?.status === 'succeeded'))
+  const unreadReadyJobs = Object.values(trackedJobs).filter((entry): entry is TrackedJob => Boolean(entry?.job?.status === 'succeeded' && !entry.seen))
+  const readyCountByTab = (target: Tab) => unreadReadyJobs.filter((entry) => entry.tab === target).length
+  const pollableJobsKey = Object.values(trackedJobs)
+    .filter((entry): entry is TrackedJob => Boolean(entry && (isRunning(entry.job) || (entry.tab === tab && entry.job?.status === 'succeeded' && entry.job.resultType?.startsWith('image/') && entry.fileCount === 1 && !entry.resultUrl))))
+    .map((entry) => `${entry.capability.jobId}:${entry.job?.status || 'pending'}`)
+    .sort()
+    .join('|')
 
   const originalUrl = useMemo(() => {
-    if (files.length !== 1 || !files[0].type.startsWith('image/')) return null
-    return URL.createObjectURL(files[0])
-  }, [files])
+    if (visibleTrackedJob?.sourceFiles.length !== 1 || !visibleTrackedJob.sourceFiles[0].type.startsWith('image/')) return null
+    return URL.createObjectURL(visibleTrackedJob.sourceFiles[0])
+  }, [visibleTrackedJob?.sourceFiles])
 
   useEffect(() => () => { if (originalUrl) URL.revokeObjectURL(originalUrl) }, [originalUrl])
-  useEffect(() => () => { if (resultUrl) URL.revokeObjectURL(resultUrl) }, [resultUrl])
+  useEffect(() => { trackedJobsRef.current = trackedJobs }, [trackedJobs])
+  useEffect(() => { tabRef.current = tab }, [tab])
+  useEffect(() => {
+    const persisted = Object.fromEntries(Object.entries(trackedJobs).map(([jobTab, entry]) => [jobTab, {
+      ...entry,
+      sourceFiles: [],
+      resultUrl: null,
+      previewLoading: false,
+    }]))
+    localStorage.setItem(TRACKED_JOBS_STORAGE_KEY, JSON.stringify(persisted))
+  }, [trackedJobs])
+  useEffect(() => () => {
+    Object.values(trackedJobsRef.current).forEach((entry) => {
+      if (entry?.resultUrl) URL.revokeObjectURL(entry.resultUrl)
+    })
+  }, [])
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('gpthub-theme', theme) }, [theme])
   useEffect(() => { document.documentElement.lang = language; localStorage.setItem('gpthub-language', language) }, [language])
   useEffect(() => {
@@ -336,91 +415,125 @@ export default function App() {
     }
   }, [])
   useEffect(() => {
-    const isReady = job?.status === 'succeeded'
+    const isReady = completedJobs.length > 0
     document.title = isReady ? `${copy.tabReady} — GPTHub Tools` : initialTitleRef.current
     setFavicon(isReady ? READY_FAVICON : initialFaviconRef.current || '/favicon.svg')
 
     if (
       isReady
-      && job
-      && notifiedJobRef.current !== job.jobId
       && document.visibilityState === 'hidden'
       && typeof Notification !== 'undefined'
       && Notification.permission === 'granted'
     ) {
-      notifiedJobRef.current = job.jobId
-      new Notification('GPTHub Tools', { body: copy.notificationReady })
+      const newReadyJobs = unreadReadyJobs.filter((entry) => !notifiedJobIdsRef.current.has(entry.capability.jobId))
+      if (newReadyJobs.length) {
+        newReadyJobs.forEach((entry) => notifiedJobIdsRef.current.add(entry.capability.jobId))
+        new Notification('GPTHub Tools', { body: copy.notificationReady })
+      }
     }
-  }, [copy.notificationReady, copy.tabReady, job])
+  }, [completedJobs, copy.notificationReady, copy.tabReady, unreadReadyJobs])
   useEffect(() => {
-    if (!busy) return
+    if (!hasRunningJobs) return
     setClock(Date.now())
     const timer = window.setInterval(() => setClock(Date.now()), 1000)
     return () => window.clearInterval(timer)
-  }, [busy])
+  }, [hasRunningJobs])
 
   useEffect(() => {
-    if (!capability) return
+    if (!pollableJobsKey) return
     let stopped = false
-    let timer: number | undefined
     const poll = async () => {
-      try {
-        const current = await getJob(capability)
-        if (stopped) return
-        setJob(current)
-        if (current.status === 'succeeded') {
-          if (current.resultType?.startsWith('image/') && files.length === 1) {
-            const blob = await fetchResult(capability)
-            if (!stopped) setResultUrl(URL.createObjectURL(blob))
+      const entries = Object.entries(trackedJobsRef.current) as [Tab, TrackedJob][]
+      await Promise.all(entries.map(async ([jobTab, entry]) => {
+        const shouldPollStatus = isRunning(entry.job)
+        const shouldLoadPreview = entry.job?.status === 'succeeded'
+          && jobTab === tabRef.current
+          && entry.job.resultType?.startsWith('image/')
+          && entry.fileCount === 1
+          && !entry.resultUrl
+          && !previewFetchesRef.current.has(entry.capability.jobId)
+        if (!shouldPollStatus && !shouldLoadPreview) return
+        try {
+          const current = shouldPollStatus ? await getJob(entry.capability) : entry.job!
+          if (stopped) return
+          const isCurrentTab = jobTab === tabRef.current
+          if (current.status === 'succeeded' && shouldLoadPreview) {
+            previewFetchesRef.current.add(entry.capability.jobId)
+            setTrackedJobs((jobs) => {
+              const latest = jobs[jobTab]
+              if (!latest || latest.capability.jobId !== entry.capability.jobId) return jobs
+              return { ...jobs, [jobTab]: { ...latest, job: current, error: null, previewLoading: true, seen: latest.seen || isCurrentTab } }
+            })
+            try {
+              const blob = await fetchResult(entry.capability)
+              if (stopped) return
+              const resultUrl = URL.createObjectURL(blob)
+              setTrackedJobs((jobs) => {
+                const latest = jobs[jobTab]
+                if (!latest || latest.capability.jobId !== entry.capability.jobId) {
+                  URL.revokeObjectURL(resultUrl)
+                  return jobs
+                }
+                return { ...jobs, [jobTab]: { ...latest, job: current, resultUrl, previewLoading: false, seen: latest.seen || isCurrentTab } }
+              })
+            } catch {
+              setTrackedJobs((jobs) => {
+                const latest = jobs[jobTab]
+                return !latest || latest.capability.jobId !== entry.capability.jobId ? jobs : { ...jobs, [jobTab]: { ...latest, previewLoading: false } }
+              })
+            } finally {
+              previewFetchesRef.current.delete(entry.capability.jobId)
+            }
+            return
           }
-          return
+          setTrackedJobs((jobs) => {
+            const latest = jobs[jobTab]
+            if (!latest || latest.capability.jobId !== entry.capability.jobId) return jobs
+            return { ...jobs, [jobTab]: { ...latest, job: current, error: null, seen: latest.seen || (current.status === 'succeeded' && isCurrentTab) } }
+          })
+        } catch (caught) {
+          const problem = caught as Error & { code?: string }
+          setTrackedJobs((jobs) => {
+            const latest = jobs[jobTab]
+            return !latest || latest.capability.jobId !== entry.capability.jobId ? jobs : { ...jobs, [jobTab]: { ...latest, error: { message: problem.message, code: problem.code } } }
+          })
         }
-        if (current.status === 'failed' || current.status === 'cancelled') return
-        timer = window.setTimeout(poll, 1200)
-      } catch (caught) {
-        const problem = caught as Error & { code?: string }
-        setError({ message: problem.message, code: problem.code })
-      }
+      }))
     }
     void poll()
-    return () => { stopped = true; if (timer) window.clearTimeout(timer) }
-  }, [capability, files.length])
+    const timer = window.setInterval(() => { void poll() }, 1200)
+    return () => { stopped = true; window.clearInterval(timer) }
+  }, [pollableJobsKey])
+
+  useEffect(() => {
+    setTrackedJobs((jobs) => {
+      const entry = jobs[tab]
+      if (!entry || entry.job?.status !== 'succeeded' || entry.seen) return jobs
+      return { ...jobs, [tab]: { ...entry, seen: true } }
+    })
+  }, [tab])
 
   const navigateTab = (next: Tab) => {
     setTab(next)
     setMode('images')
     window.history.pushState({}, '', routeForTab[next])
-    resetJob()
+    resetForm()
   }
 
   const navigateMode = (next: ConvertMode) => {
     setMode(next)
     window.history.pushState({}, '', `/convert/${next}`)
-    resetJob()
+    resetForm()
   }
 
-  const resetJob = () => {
+  const resetForm = () => {
     setFiles([])
-    setCapability(null)
-    setJob(null)
     setError(null)
-    setSubmitting(false)
-    submittingRef.current = false
-    setSubmittedAt(null)
-    setInputPixels(0)
-    if (resultUrl) URL.revokeObjectURL(resultUrl)
-    setResultUrl(null)
   }
 
   const addFiles = (incoming: File[]) => {
     setFiles((current) => [...current, ...incoming].slice(0, 20))
     setError(null)
-    setJob(null)
-    setCapability(null)
-    setSubmittedAt(null)
-    setInputPixels(0)
-    if (resultUrl) URL.revokeObjectURL(resultUrl)
-    setResultUrl(null)
   }
 
   let operation: Operation = 'upscale'
@@ -449,21 +562,25 @@ export default function App() {
     if (submittingRef.current || busy) return
     if (!files.length) return setError({ message: copy.noFiles })
     if (operation === 'pdf-merge' && files.length < 2) return setError({ message: copy.needTwoPdfs })
+    const targetTab = tab
+    const targetOperation = operation
+    const sourceFiles = [...files]
+    const targetScale = scale
     submittingRef.current = true
     setSubmitting(true)
+    setSubmittingTab(targetTab)
     setError(null)
-    setJob(null)
     const options: Record<string, unknown> = {}
-    if (operation === 'upscale') Object.assign(options, { scale, format, quality })
-    if (operation === 'remove-background') Object.assign(options, { format, quality })
-    if (operation === 'image-convert') Object.assign(options, { format, quality, maxWidth: Number(maxWidth) || 0, maxHeight: Number(maxHeight) || 0 })
-    if (operation === 'pdf-split') Object.assign(options, { mode: splitMode, ranges })
-    if (operation === 'images-to-pdf') Object.assign(options, { pageSize, orientation, margin })
-    if (operation === 'pdf-to-images') Object.assign(options, { format, quality, dpi })
+    if (targetOperation === 'upscale') Object.assign(options, { scale: targetScale, format, quality })
+    if (targetOperation === 'remove-background') Object.assign(options, { format, quality })
+    if (targetOperation === 'image-convert') Object.assign(options, { format, quality, maxWidth: Number(maxWidth) || 0, maxHeight: Number(maxHeight) || 0 })
+    if (targetOperation === 'pdf-split') Object.assign(options, { mode: splitMode, ranges })
+    if (targetOperation === 'images-to-pdf') Object.assign(options, { pageSize, orientation, margin })
+    if (targetOperation === 'pdf-to-images') Object.assign(options, { format, quality, dpi })
     try {
       let pixels = 0
-      if (operation === 'upscale') {
-        for (const file of files) {
+      if (targetOperation === 'upscale') {
+        for (const file of sourceFiles) {
           let filePixels = 0
           try {
             filePixels = await imagePixelCount(file)
@@ -471,7 +588,7 @@ export default function App() {
             continue
           }
           pixels += filePixels
-          if (filePixels * scale * scale > MAX_UPSCALE_OUTPUT_PIXELS) {
+          if (filePixels * targetScale * targetScale > MAX_UPSCALE_OUTPUT_PIXELS) {
             const problem = new Error('The image is too large for the selected upscale factor') as Error & { code?: string }
             problem.code = 'IMAGE_TOO_LARGE'
             throw problem
@@ -479,57 +596,85 @@ export default function App() {
         }
       }
       const started = Date.now()
-      setInputPixels(pixels)
-      setSubmittedAt(started)
       setClock(started)
-      const created = await createJob(operation, files, options)
-      setCapability(created)
+      const created = await createJob(targetOperation, sourceFiles, options)
+      setTrackedJobs((jobs) => {
+        const replaced = jobs[targetTab]
+        if (replaced?.resultUrl) URL.revokeObjectURL(replaced.resultUrl)
+        return {
+          ...jobs,
+          [targetTab]: {
+            capability: created,
+            tab: targetTab,
+            operation: targetOperation,
+            sourceFiles,
+            fileCount: sourceFiles.length,
+            scale: targetScale,
+            submittedAt: started,
+            inputPixels: pixels,
+            job: null,
+            error: null,
+            resultUrl: null,
+            previewLoading: false,
+            seen: false,
+          },
+        }
+      })
     } catch (caught) {
       const problem = caught as Error & { code?: string }
       setError({ message: problem.message, code: problem.code })
     } finally {
       submittingRef.current = false
       setSubmitting(false)
+      setSubmittingTab(null)
     }
   }
 
   const download = async () => {
-    if (!capability || !job) return
-    const blob = await fetchResult(capability)
+    if (!visibleTrackedJob || !visibleJob) return
+    const blob = await fetchResult(visibleTrackedJob.capability)
     const url = URL.createObjectURL(blob)
     const anchor = document.createElement('a')
     anchor.href = url
-    anchor.download = job.resultName || 'result'
+    anchor.download = visibleJob.resultName || 'result'
     anchor.click()
     window.setTimeout(() => URL.revokeObjectURL(url), 1000)
   }
 
   const cancel = async () => {
-    if (capability) await cancelJob(capability)
-    resetJob()
+    if (!visibleTrackedJob) return
+    await cancelJob(visibleTrackedJob.capability)
+    setTrackedJobs((jobs) => {
+      const removed = jobs[tab]
+      if (removed?.resultUrl) URL.revokeObjectURL(removed.resultUrl)
+      const { [tab]: _, ...remaining } = jobs
+      return remaining
+    })
+    resetForm()
   }
 
   const title = tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
   const lead = tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
-  const localizedError = error?.code ? copy.errors[error.code] || error.message : error?.message
-  const startedAt = job?.createdAt ? Date.parse(job.createdAt) : submittedAt
+  const visibleError = visibleTrackedJob?.error || error
+  const localizedError = visibleError?.code ? copy.errors[visibleError.code] || visibleError.message : visibleError?.message
+  const startedAt = visibleJob?.createdAt ? Date.parse(visibleJob.createdAt) : visibleTrackedJob?.submittedAt
   const elapsedSeconds = startedAt ? Math.max(0, Math.floor((clock - startedAt) / 1000)) : 0
-  const estimatedSeconds = estimateDuration(operation, scale, files.length, inputPixels)
-  const progressPercent = job?.status === 'succeeded'
+  const estimatedSeconds = estimateDuration(visibleTrackedJob?.operation || operation, visibleTrackedJob?.scale || scale, visibleTrackedJob?.fileCount || files.length, visibleTrackedJob?.inputPixels || 0)
+  const progressPercent = visibleJob?.status === 'succeeded'
     ? 100
-    : submitting
+    : isSubmittingHere
       ? 4
-      : job?.status === 'queued' || !job
+      : visibleJob?.status === 'queued' || !visibleJob
         ? 8
         : Math.min(94, Math.round(12 + (elapsedSeconds / estimatedSeconds) * 82))
   const remainingSeconds = Math.max(0, estimatedSeconds - elapsedSeconds)
-  const progressMeta = job?.status === 'running'
+  const progressMeta = visibleJob?.status === 'running'
     ? remainingSeconds > 0
       ? `~${progressPercent}% · ${copy.remaining} ${formatDuration(remainingSeconds, language)} · ${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
       : `~${progressPercent}% · ${copy.almostDone} · ${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
-    : job?.status === 'queued'
+    : visibleJob?.status === 'queued'
       ? `${copy.waitingToStart} · ${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
-      : submitting
+      : isSubmittingHere
         ? copy.uploading
         : ''
 
@@ -550,15 +695,20 @@ export default function App() {
       <main>
         <nav className="tabs" aria-label="Tools">
           {(['upscale', 'remove', 'convert'] as Tab[]).map((item) => (
-            <button
-              key={item}
-              className={tab === item ? 'active' : ''}
-              aria-label={item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert}
-              onClick={() => navigateTab(item)}
-            >
-              <span>{item === 'upscale' ? '↗' : item === 'remove' ? '◐' : '⇄'}</span>
-              {item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert}
-            </button>
+            (() => {
+              const label = item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert
+              const readyCount = readyCountByTab(item)
+              return <button
+                key={item}
+                className={tab === item ? 'active' : ''}
+                aria-label={readyCount ? `${label}: ${copy.tabReadyBadge.replace('{count}', String(readyCount))}` : label}
+                onClick={() => navigateTab(item)}
+              >
+                <span className="tab-icon">{item === 'upscale' ? '↗' : item === 'remove' ? '◐' : '⇄'}</span>
+                <span className="tab-label">{label}</span>
+                {readyCount > 0 && <span className="tab-ready-badge" aria-hidden="true">✓ {readyCount}</span>}
+              </button>
+            })()
           ))}
         </nav>
 
@@ -584,7 +734,7 @@ export default function App() {
             {([
               ['pdf-merge', copy.merge], ['pdf-split', copy.split], ['images-to-pdf', copy.imagesToPdf], ['pdf-to-images', copy.pdfToImages],
             ] as [PdfAction, string][]).map(([value, label]) => (
-              <button key={value} className={pdfAction === value ? 'active' : ''} onClick={() => { setPdfAction(value); resetJob() }}>{label}</button>
+              <button key={value} className={pdfAction === value ? 'active' : ''} onClick={() => { setPdfAction(value); resetForm() }}>{label}</button>
             ))}
           </div>
         )}
@@ -615,21 +765,26 @@ export default function App() {
             </div>
           </div>
 
-          {(busy || job || localizedError) && <div className={`job-panel ${job?.status === 'succeeded' ? 'success' : localizedError ? 'failure' : ''}`}>
-            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div></> : <><span className="status-icon">{job?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{job?.status === 'succeeded' ? copy.ready : submitting ? copy.uploading : job?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{job?.resultName && <small>{job.resultName}</small>}</div><div className="job-actions">{job?.status === 'succeeded' ? <button className="download-button is-ready" onClick={() => void download()}>{copy.download} ↓</button> : capability ? <button className="text-button" onClick={() => void cancel()}>{copy.cancel}</button> : null}</div></>}
+          {(isSubmittingHere || visibleBusy || visibleJob || localizedError) && <div className={`job-panel ${visibleJob?.status === 'succeeded' ? 'success' : localizedError ? 'failure' : ''}`}>
+            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div></> : <><span className="status-icon">{visibleJob?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{visibleJob?.status === 'succeeded' ? copy.ready : isSubmittingHere ? copy.uploading : visibleJob?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{visibleJob?.resultName && <small>{visibleJob.resultName}</small>}</div><div className="job-actions">{visibleJob?.status === 'succeeded' ? <button className="download-button is-ready" onClick={() => void download()}>{copy.download} ↓</button> : visibleTrackedJob ? <button className="text-button" onClick={() => void cancel()}>{copy.cancel}</button> : null}</div></>}
           </div>}
 
-          {tab === 'upscale' && resultUrl && <div className="result-preview">
+          {tab === 'upscale' && visibleTrackedJob?.resultUrl && <div className="result-preview">
             <div className="comparison-head"><strong>{copy.resultPreview}</strong><span>{copy.zoomHint}</span></div>
-            <ZoomPane label={copy.resultPreview} src={resultUrl} checkerboard={false} copy={copy} />
+            <ZoomPane label={copy.resultPreview} src={visibleTrackedJob.resultUrl} checkerboard={false} copy={copy} />
           </div>}
 
-          {tab !== 'upscale' && originalUrl && resultUrl && <div className="comparison">
+          {tab !== 'upscale' && originalUrl && visibleTrackedJob?.resultUrl && <div className="comparison">
             <div className="comparison-head"><strong>{copy.compare}</strong><span>{copy.zoomHint}</span></div>
             <div className="compare-grid">
               <ZoomPane label={copy.before} src={originalUrl} checkerboard={false} copy={copy} />
-              <ZoomPane label={copy.after} src={resultUrl} checkerboard={tab === 'remove'} copy={copy} />
+              <ZoomPane label={copy.after} src={visibleTrackedJob.resultUrl} checkerboard={tab === 'remove'} copy={copy} />
             </div>
+          </div>}
+
+          {tab !== 'upscale' && !originalUrl && visibleTrackedJob?.resultUrl && <div className="result-preview">
+            <div className="comparison-head"><strong>{copy.resultPreview}</strong><span>{copy.zoomHint}</span></div>
+            <ZoomPane label={copy.resultPreview} src={visibleTrackedJob.resultUrl} checkerboard={tab === 'remove'} copy={copy} />
           </div>}
         </section>
 

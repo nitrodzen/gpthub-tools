@@ -7,6 +7,7 @@ import time
 from redis.asyncio import Redis
 
 from .config import settings
+from .storage import release_active_job
 
 
 async def cleanup_once(redis: Redis) -> int:
@@ -20,6 +21,8 @@ async def cleanup_once(redis: Redis) -> int:
         record = await redis.hgetall(f"job:{job_id}")
         if not record or record.get("status") in {"succeeded", "failed", "cancelled"}:
             shutil.rmtree(directory, ignore_errors=True)
+            if record and record.get("ip_hash"):
+                await release_active_job(redis, record["ip_hash"], job_id)
             await redis.delete(f"job:{job_id}")
             await redis.zrem("job-expirations", job_id)
             removed += 1
@@ -33,7 +36,7 @@ async def cleanup_expired(redis: Redis) -> int:
         job_id = raw_job_id.decode() if isinstance(raw_job_id, bytes) else raw_job_id
         record = await redis.hgetall(f"job:{job_id}")
         if record.get("ip_hash"):
-            await redis.delete(f"active:{record['ip_hash']}")
+            await release_active_job(redis, record["ip_hash"], job_id)
         shutil.rmtree(settings.jobs_root / job_id, ignore_errors=True)
         await redis.delete(f"job:{job_id}")
         await redis.zrem("job-expirations", job_id)

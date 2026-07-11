@@ -104,4 +104,50 @@ describe('App', () => {
     expect(document.title).toBe('✓ Результат готов — GPTHub Tools')
     expect(document.querySelector('link[rel~="icon"]')?.getAttribute('href')).toMatch(/^data:image\/svg\+xml,/)
   })
+
+  it('keeps processing jobs while another tool is opened', async () => {
+    apiMocks.createJob
+      .mockResolvedValueOnce({ jobId: 'upscale-job', token: 'capability-token-upscale', expiresAt: '2026-07-11T03:00:00Z' })
+      .mockResolvedValueOnce({ jobId: 'remove-job', token: 'capability-token-remove', expiresAt: '2026-07-11T03:00:00Z' })
+    apiMocks.getJob.mockResolvedValue({
+      jobId: 'upscale-job', operation: 'upscale', status: 'running', progress: 0, total: 1,
+      createdAt: new Date().toISOString(), expiresAt: '2026-07-11T03:00:00Z',
+    })
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['image'], 'upscale.png', { type: 'image/png' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+    expect(await screen.findByText('Обработка на сервере')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Удалить фон' }))
+    fireEvent.change(input, { target: { files: [new File(['image'], 'remove.png', { type: 'image/png' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledTimes(2))
+
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('gpthub-tracked-jobs-v1') || '{}')
+      expect(stored.upscale.capability.jobId).toBe('upscale-job')
+      expect(stored.remove.capability.jobId).toBe('remove-job')
+    })
+  })
+
+  it('restores a completed task and marks its tool tab as ready', async () => {
+    localStorage.setItem('gpthub-tracked-jobs-v1', JSON.stringify({
+      upscale: {
+        capability: { jobId: 'stored-upscale', token: 'stored-capability-token', expiresAt: '2099-07-11T03:00:00Z' },
+        tab: 'upscale', operation: 'upscale', fileCount: 1, scale: 2, submittedAt: Date.now(), inputPixels: 0,
+        job: { jobId: 'stored-upscale', operation: 'upscale', status: 'succeeded', progress: 1, total: 1, createdAt: new Date().toISOString(), expiresAt: '2099-07-11T03:00:00Z', resultName: 'result.png', resultType: 'image/png' },
+        error: null, seen: false,
+      },
+    }))
+    apiMocks.fetchResult.mockResolvedValue(new Blob(['result'], { type: 'image/png' }))
+    window.history.replaceState({}, '', '/convert/images')
+    render(<App />)
+
+    expect(screen.getByRole('button', { name: 'Увеличить: готово: 1' })).toBeInTheDocument()
+    expect(document.title).toBe('✓ Результат готов — GPTHub Tools')
+    fireEvent.click(screen.getByRole('button', { name: 'Увеличить: готово: 1' }))
+    await waitFor(() => expect(screen.getByRole('button', { name: 'Увеличить' })).toBeInTheDocument())
+    expect(screen.getByText('Результат готов')).toBeInTheDocument()
+  })
 })

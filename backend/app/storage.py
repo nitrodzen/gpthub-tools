@@ -5,6 +5,7 @@ import hmac
 import json
 import secrets
 import shutil
+import time
 from datetime import UTC, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -33,6 +34,70 @@ def ip_digest(ip: str) -> str:
 
 def job_path(job_id: str) -> Path:
     return settings.jobs_root / job_id
+
+
+def active_jobs_key(ip_hash: str) -> str:
+    return f"active:{ip_hash}"
+
+
+async def reserve_active_job(redis: Redis, ip_hash: str, job_id: str) -> bool:
+    now = time.time()
+    expires_at = now + settings.job_timeout_seconds + 300
+    reserved = await redis.eval(
+        """
+        local key_type = redis.call('TYPE', KEYS[1])['ok']
+        if key_type == 'string' then
+            local existing_job = redis.call('GET', KEYS[1])
+            local remaining_ttl = redis.call('TTL', KEYS[1])
+            redis.call('DEL', KEYS[1])
+            if existing_job then
+                redis.call('ZADD', KEYS[1], ARGV[1] + math.max(remaining_ttl, 1), existing_job)
+            end
+        elseif key_type ~= 'none' and key_type ~= 'zset' then
+            return 0
+        end
+        redis.call('ZREMRANGEBYSCORE', KEYS[1], '-inf', ARGV[1])
+        if redis.call('ZCARD', KEYS[1]) >= tonumber(ARGV[2]) then
+            return 0
+        end
+        redis.call('ZADD', KEYS[1], ARGV[3], ARGV[4])
+        redis.call('EXPIRE', KEYS[1], ARGV[5])
+        return 1
+        """,
+        1,
+        active_jobs_key(ip_hash),
+        now,
+        settings.max_active_jobs_per_ip,
+        expires_at,
+        job_id,
+        settings.job_timeout_seconds + 300,
+    )
+    return bool(reserved)
+
+
+async def release_active_job(redis: Redis, ip_hash: str, job_id: str) -> None:
+    await redis.eval(
+        """
+        local key_type = redis.call('TYPE', KEYS[1])['ok']
+        if key_type == 'string' then
+            if redis.call('GET', KEYS[1]) == ARGV[1] then
+                redis.call('DEL', KEYS[1])
+            end
+            return 1
+        end
+        if key_type ~= 'zset' then
+            return 1
+        end
+        redis.call('ZREM', KEYS[1], ARGV[1])
+        if redis.call('ZCARD', KEYS[1]) == 0 then
+            redis.call('DEL', KEYS[1])
+        end
+        return 1
+        """,
+        1,
+        active_jobs_key(ip_hash),
+        job_id,
+    )
 
 
 def create_job_directory(job_id: str) -> Path:
@@ -74,7 +139,6 @@ async def create_job_record(
     await redis.hset(f"job:{job_id}", mapping=record)
     await redis.expire(f"job:{job_id}", settings.job_ttl_seconds)
     await redis.zadd("job-expirations", {job_id: expires.timestamp()})
-    await redis.set(f"active:{ip_hash}", job_id, ex=settings.job_timeout_seconds + 300)
     return record
 
 

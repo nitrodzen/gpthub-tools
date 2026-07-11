@@ -35,6 +35,8 @@ from .storage import (
     ip_digest,
     new_capability,
     record_to_view,
+    release_active_job,
+    reserve_active_job,
 )
 
 
@@ -177,18 +179,17 @@ async def create_job(
         raise JobFailure(ErrorCode.INVALID_FILE, "Job options must be a JSON object") from exc
 
     ip_hash = ip_digest(client_ip(request))
-    if await redis.exists(f"active:{ip_hash}"):
-        raise JobFailure(
-            ErrorCode.ACTIVE_JOB_EXISTS, "Another processing job is already active for this address"
-        )
-    await consume_rate(redis, ip_hash, operation, len(files))
-
     job_id, token = new_capability()
-    root = create_job_directory(job_id)
+    if not await reserve_active_job(redis, ip_hash, job_id):
+        raise JobFailure(
+            ErrorCode.ACTIVE_JOB_EXISTS, "Maximum concurrent jobs reached for this address"
+        )
     stored: list[dict] = []
     total = 0
-    allowed = allowed_extensions(operation)
     try:
+        await consume_rate(redis, ip_hash, operation, len(files))
+        root = create_job_directory(job_id)
+        allowed = allowed_extensions(operation)
         for upload in files:
             extension = Path(upload.filename or "").suffix.lower()
             if extension not in allowed:
@@ -249,7 +250,8 @@ async def create_job(
         )
     except Exception:
         delete_job_directory(job_id)
-        await redis.delete(f"job:{job_id}", f"active:{ip_hash}")
+        await redis.delete(f"job:{job_id}")
+        await release_active_job(redis, ip_hash, job_id)
         raise
     finally:
         for upload in files:
@@ -307,7 +309,7 @@ async def delete_job(
     redis: Redis = request.app.state.redis
     record = await authorized_job(redis, job_id, token)
     await redis.hset(f"job:{job_id}", mapping={"status": JobStatus.CANCELLED.value})
-    await redis.delete(f"active:{record['ip_hash']}")
+    await release_active_job(redis, record["ip_hash"], job_id)
     await redis.zrem("job-expirations", job_id)
     if record["status"] != JobStatus.RUNNING.value:
         delete_job_directory(job_id)

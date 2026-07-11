@@ -17,6 +17,7 @@ x-backend: &backend
     BACKGROUND_URL: ${BACKGROUND_URL:-https://api.gpthub.ru/bgr1/process}
     CLAMAV_HOST: clamav
     CLAMAV_REQUIRED: ${CLAMAV_REQUIRED:-true}
+    MAX_ACTIVE_JOBS_PER_IP: ${MAX_ACTIVE_JOBS_PER_IP:-3}
   volumes:
     - ./data/jobs:/data/jobs
   networks:
