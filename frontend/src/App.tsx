@@ -8,6 +8,18 @@ type PdfAction = 'pdf-merge' | 'pdf-split' | 'images-to-pdf' | 'pdf-to-images'
 type Theme = 'light' | 'dark'
 
 const MAX_UPSCALE_OUTPUT_PIXELS = 420_000_000
+const READY_FAVICON = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#18a86b"/><path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="7" d="m17 33 10 10 21-23"/></svg>')}`
+
+function setFavicon(href: string) {
+  let icon = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')
+  if (!icon) {
+    icon = document.createElement('link')
+    icon.rel = 'icon'
+    icon.type = 'image/svg+xml'
+    document.head.append(icon)
+  }
+  icon.href = href
+}
 
 async function imagePixelCount(file: File) {
   const bitmap = await createImageBitmap(file)
@@ -301,6 +313,9 @@ export default function App() {
   const [inputPixels, setInputPixels] = useState(0)
   const [clock, setClock] = useState(Date.now())
   const submittingRef = useRef(false)
+  const initialTitleRef = useRef(document.title)
+  const initialFaviconRef = useRef<string | null>(null)
+  const notifiedJobRef = useRef<string | null>(null)
   const copy = getCopy(language)
   const busy = submitting || Boolean(capability && (!job || job.status === 'queued' || job.status === 'running'))
 
@@ -313,6 +328,30 @@ export default function App() {
   useEffect(() => () => { if (resultUrl) URL.revokeObjectURL(resultUrl) }, [resultUrl])
   useEffect(() => { document.documentElement.dataset.theme = theme; localStorage.setItem('gpthub-theme', theme) }, [theme])
   useEffect(() => { document.documentElement.lang = language; localStorage.setItem('gpthub-language', language) }, [language])
+  useEffect(() => {
+    initialFaviconRef.current = document.querySelector<HTMLLinkElement>('link[rel~="icon"]')?.getAttribute('href') || '/favicon.svg'
+    return () => {
+      document.title = initialTitleRef.current
+      setFavicon(initialFaviconRef.current || '/favicon.svg')
+    }
+  }, [])
+  useEffect(() => {
+    const isReady = job?.status === 'succeeded'
+    document.title = isReady ? `${copy.tabReady} — GPTHub Tools` : initialTitleRef.current
+    setFavicon(isReady ? READY_FAVICON : initialFaviconRef.current || '/favicon.svg')
+
+    if (
+      isReady
+      && job
+      && notifiedJobRef.current !== job.jobId
+      && document.visibilityState === 'hidden'
+      && typeof Notification !== 'undefined'
+      && Notification.permission === 'granted'
+    ) {
+      notifiedJobRef.current = job.jobId
+      new Notification('GPTHub Tools', { body: copy.notificationReady })
+    }
+  }, [copy.notificationReady, copy.tabReady, job])
   useEffect(() => {
     if (!busy) return
     setClock(Date.now())
@@ -577,10 +616,15 @@ export default function App() {
           </div>
 
           {(busy || job || localizedError) && <div className={`job-panel ${job?.status === 'succeeded' ? 'success' : localizedError ? 'failure' : ''}`}>
-            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div></> : <><span className="status-icon">{job?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{job?.status === 'succeeded' ? copy.ready : submitting ? copy.uploading : job?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{job?.resultName && <small>{job.resultName}</small>}</div><div className="job-actions">{job?.status === 'succeeded' ? <button className="download-button" onClick={() => void download()}>{copy.download} ↓</button> : capability ? <button className="text-button" onClick={() => void cancel()}>{copy.cancel}</button> : null}</div></>}
+            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div></> : <><span className="status-icon">{job?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{job?.status === 'succeeded' ? copy.ready : submitting ? copy.uploading : job?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{job?.resultName && <small>{job.resultName}</small>}</div><div className="job-actions">{job?.status === 'succeeded' ? <button className="download-button is-ready" onClick={() => void download()}>{copy.download} ↓</button> : capability ? <button className="text-button" onClick={() => void cancel()}>{copy.cancel}</button> : null}</div></>}
           </div>}
 
-          {originalUrl && resultUrl && <div className="comparison">
+          {tab === 'upscale' && resultUrl && <div className="result-preview">
+            <div className="comparison-head"><strong>{copy.resultPreview}</strong><span>{copy.zoomHint}</span></div>
+            <ZoomPane label={copy.resultPreview} src={resultUrl} checkerboard={false} copy={copy} />
+          </div>}
+
+          {tab !== 'upscale' && originalUrl && resultUrl && <div className="comparison">
             <div className="comparison-head"><strong>{copy.compare}</strong><span>{copy.zoomHint}</span></div>
             <div className="compare-grid">
               <ZoomPane label={copy.before} src={originalUrl} checkerboard={false} copy={copy} />

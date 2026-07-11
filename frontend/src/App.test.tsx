@@ -28,7 +28,7 @@ describe('App', () => {
     expect(screen.getByLabelText(/90% уменьшает файл примерно на 15–30%/)).toBeInTheDocument()
   })
 
-  it('zooms the before and after panes independently', () => {
+  it('zooms image panes independently', () => {
     const copy = getCopy('ru')
     render(<><ZoomPane label={copy.before} src="before.png" checkerboard={false} copy={copy} /><ZoomPane label={copy.after} src="after.png" checkerboard={false} copy={copy} /></>)
 
@@ -79,5 +79,29 @@ describe('App', () => {
     expect(await screen.findByText('Обработка на сервере')).toBeInTheDocument()
     expect(screen.getByText(/~\d+% · осталось примерно .* · прошло/)).toBeInTheDocument()
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow')
+  })
+
+  it('shows one result preview for upscaling and highlights a completed job', async () => {
+    apiMocks.createJob.mockResolvedValue({
+      jobId: 'job-ready', token: 'capability-token-123456789', expiresAt: '2026-07-11T03:00:00Z',
+    })
+    apiMocks.getJob.mockResolvedValue({
+      jobId: 'job-ready', operation: 'upscale', status: 'succeeded', progress: 1, total: 1,
+      createdAt: new Date().toISOString(), expiresAt: '2026-07-11T03:00:00Z', resultName: 'upscaled.png', resultType: 'image/png',
+    })
+    apiMocks.fetchResult.mockResolvedValue(new Blob(['result'], { type: 'image/png' }))
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['image'], 'photo.png', { type: 'image/png' })] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+
+    expect(await screen.findByAltText('Готовый результат')).toBeInTheDocument()
+    expect(container.querySelectorAll('.result-preview .compare-pane')).toHaveLength(1)
+    expect(screen.queryByText('Сравнение до и после')).not.toBeInTheDocument()
+    expect(screen.queryByText('До')).not.toBeInTheDocument()
+    expect(screen.queryByText('После')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /Скачать результат/ })).toHaveClass('is-ready')
+    expect(document.title).toBe('✓ Результат готов — GPTHub Tools')
+    expect(document.querySelector('link[rel~="icon"]')?.getAttribute('href')).toMatch(/^data:image\/svg\+xml,/)
   })
 })
