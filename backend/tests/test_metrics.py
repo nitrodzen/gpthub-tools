@@ -2,11 +2,14 @@ from __future__ import annotations
 
 import sqlite3
 from datetime import UTC, date, datetime
+from types import SimpleNamespace
 
 import pytest
 
+from app import main
 from app.metrics import MetricsStore
 from app.models import JobStatus, Operation
+from app.storage import token_digest
 
 
 @pytest.mark.asyncio
@@ -90,3 +93,46 @@ async def test_metrics_prune_and_write_failure_do_not_raise(tmp_path) -> None:
         input_bytes=0,
         error_code="INVALID_FILE",
     )
+
+
+class FakeJobRedis:
+    def __init__(self, record: dict[str, str]) -> None:
+        self.record = record
+        self.deleted: list[str] = []
+        self.zrem_calls: list[tuple[str, str]] = []
+        self.hset_calls: list[dict[str, str]] = []
+
+    async def hgetall(self, _key: str) -> dict[str, str]:
+        return self.record
+
+    async def delete(self, key: str) -> None:
+        self.deleted.append(key)
+
+    async def zrem(self, key: str, job_id: str) -> None:
+        self.zrem_calls.append((key, job_id))
+
+    async def hset(self, _key: str, mapping: dict[str, str]) -> None:
+        self.hset_calls.append(mapping)
+
+
+@pytest.mark.asyncio
+async def test_delete_completed_job_keeps_metrics_but_removes_result(monkeypatch) -> None:
+    token = "capability-token-123456789"
+    redis = FakeJobRedis(
+        {
+            "job_id": "job-done",
+            "token_hash": token_digest(token),
+            "status": JobStatus.SUCCEEDED.value,
+            "ip_hash": "hashed-ip",
+        }
+    )
+    removed: list[str] = []
+    monkeypatch.setattr(main, "delete_job_directory", removed.append)
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=redis)))
+
+    await main.delete_job(request, "job-done", token)
+
+    assert removed == ["job-done"]
+    assert redis.deleted == ["job:job-done"]
+    assert redis.zrem_calls == [("job-expirations", "job-done")]
+    assert redis.hset_calls == []

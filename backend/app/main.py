@@ -459,7 +459,14 @@ async def delete_job(
 ):
     redis: Redis = request.app.state.redis
     record = await authorized_job(redis, job_id, token)
-    if record["status"] in {JobStatus.SUCCEEDED.value, JobStatus.FAILED.value}:
+    if record["status"] in {
+        JobStatus.SUCCEEDED.value,
+        JobStatus.FAILED.value,
+        JobStatus.CANCELLED.value,
+    }:
+        delete_job_directory(job_id)
+        await redis.delete(f"job:{job_id}")
+        await redis.zrem("job-expirations", job_id)
         return None
     await redis.hset(f"job:{job_id}", mapping={"status": JobStatus.CANCELLED.value})
     await metrics.record_terminal(job_id=job_id, status=JobStatus.CANCELLED)
