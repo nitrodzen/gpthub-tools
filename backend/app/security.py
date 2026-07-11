@@ -135,5 +135,19 @@ def _scan_sync(path: Path) -> None:
             ) from exc
 
 
+def _scanner_ready_sync() -> bool:
+    if not settings.clamav_required:
+        return True
+    try:
+        scanner = clamd.ClamdNetworkSocket(settings.clamav_host, settings.clamav_port, timeout=5)
+        return bool(scanner.ping())
+    except Exception:
+        return False
+
+
 async def scan_file(path: Path) -> None:
     await asyncio.to_thread(_scan_sync, path)
+
+
+async def scanner_ready() -> bool:
+    return await asyncio.to_thread(_scanner_ready_sync)

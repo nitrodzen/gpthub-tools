@@ -136,3 +136,35 @@ async def test_delete_completed_job_keeps_metrics_but_removes_result(monkeypatch
     assert redis.deleted == ["job:job-done"]
     assert redis.zrem_calls == [("job-expirations", "job-done")]
     assert redis.hset_calls == []
+
+
+class FakeHealthRedis:
+    async def ping(self) -> bool:
+        return True
+
+    async def scan_iter(self, _pattern: str):
+        for index in range(main.settings.expected_workers):
+            yield f"worker-{index}"
+
+
+@pytest.mark.asyncio
+async def test_health_is_degraded_when_the_required_scanner_is_unavailable(monkeypatch) -> None:
+    request = SimpleNamespace(app=SimpleNamespace(state=SimpleNamespace(redis=FakeHealthRedis())))
+    monkeypatch.setattr(
+        main.shutil,
+        "disk_usage",
+        lambda _path: SimpleNamespace(free=main.settings.max_job_bytes + 1),
+    )
+
+    async def scanner_down() -> bool:
+        return False
+
+    monkeypatch.setattr(main, "scanner_ready", scanner_down)
+    assert (await main.health(request))["status"] == "degraded"
+    assert (await main.health(request))["clamav"] is False
+
+    async def scanner_up() -> bool:
+        return True
+
+    monkeypatch.setattr(main, "scanner_ready", scanner_up)
+    assert (await main.health(request))["status"] == "ok"

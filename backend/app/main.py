@@ -28,6 +28,7 @@ from .security import (
     IMAGE_EXTENSIONS,
     allowed_extensions,
     scan_file,
+    scanner_ready,
     validate_signature,
     validate_upscale_dimensions,
 )
@@ -154,16 +155,23 @@ async def save_upload(upload: UploadFile, destination: Path, limit: int, remaini
 async def health(request: Request) -> dict:
     redis: Redis = request.app.state.redis
     redis_ok = bool(await redis.ping())
+    scanner_ok = await scanner_ready()
     workers = 0
     async for _ in redis.scan_iter("worker-heartbeat:*"):
         workers += 1
     disk = shutil.disk_usage(settings.jobs_root)
     return {
         "status": "ok"
-        if redis_ok and workers >= settings.expected_workers and disk.free > settings.max_job_bytes
+        if (
+            redis_ok
+            and scanner_ok
+            and workers >= settings.expected_workers
+            and disk.free > settings.max_job_bytes
+        )
         else "degraded",
         "version": app.version,
         "redis": redis_ok,
+        "clamav": scanner_ok,
         "workers": workers,
         "expectedWorkers": settings.expected_workers,
         "freeBytes": disk.free,
@@ -199,11 +207,18 @@ async def metrics_live_snapshot(redis: Redis) -> dict[str, int | bool | str]:
         async for _ in redis.scan_iter("worker-heartbeat:*"):
             workers += 1
     disk = shutil.disk_usage(settings.jobs_root)
+    scanner_ok = await scanner_ready()
     return {
         "status": "ok"
-        if redis_ok and workers >= settings.expected_workers and disk.free > settings.max_job_bytes
+        if (
+            redis_ok
+            and scanner_ok
+            and workers >= settings.expected_workers
+            and disk.free > settings.max_job_bytes
+        )
         else "degraded",
         "redis": redis_ok,
+        "clamav": scanner_ok,
         "workers": workers,
         "expectedWorkers": settings.expected_workers,
         "freeBytes": disk.free,

@@ -6,6 +6,7 @@ import pikepdf
 import pytest
 from PIL import Image
 
+from app import security
 from app.models import ErrorCode, JobFailure
 from app.operations import (
     convert_images,
@@ -101,3 +102,12 @@ def test_upscale_dimensions_are_limited_before_queueing(tmp_path: Path, monkeypa
     with pytest.raises(JobFailure) as failure:
         validate_upscale_dimensions(source, 4)
     assert failure.value.code == ErrorCode.IMAGE_TOO_LARGE
+
+
+@pytest.mark.asyncio
+async def test_scanner_readiness_uses_a_short_probe(monkeypatch) -> None:
+    monkeypatch.setattr(security, "_scanner_ready_sync", lambda: True)
+    assert await security.scanner_ready() is True
+
+    monkeypatch.setattr(security, "_scanner_ready_sync", lambda: False)
+    assert await security.scanner_ready() is False

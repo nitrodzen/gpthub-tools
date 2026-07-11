@@ -146,6 +146,39 @@ services:
     networks:
       - internal
     restart: unless-stopped
+    entrypoint: ["/bin/sh", "-ec"]
+    command:
+      - |-
+        /init &
+        init_pid=$$!
+        ready=0
+        failures=0
+        checks=0
+        trap 'kill -TERM "$${init_pid}" 2>/dev/null || true; wait "$${init_pid}" 2>/dev/null || true; exit 0' INT TERM
+        while kill -0 "$${init_pid}" 2>/dev/null; do
+          if clamdscan --ping 1 >/dev/null 2>&1; then
+            ready=1
+            failures=0
+          elif [ "$${ready}" -eq 1 ]; then
+            failures=$$((failures + 1))
+            if [ "$${failures}" -ge 3 ]; then
+              echo "clamd did not answer three consecutive health probes; restarting container" >&2
+              kill -TERM "$${init_pid}" 2>/dev/null || true
+              wait "$${init_pid}" 2>/dev/null || true
+              exit 1
+            fi
+          else
+            checks=$$((checks + 1))
+            if [ "$${checks}" -ge 10 ]; then
+              echo "clamd did not become ready within five minutes; restarting container" >&2
+              kill -TERM "$${init_pid}" 2>/dev/null || true
+              wait "$${init_pid}" 2>/dev/null || true
+              exit 1
+            fi
+          fi
+          sleep 30
+        done
+        wait "$${init_pid}"
     healthcheck:
       test: ["CMD-SHELL", "clamdscan --ping 1 >/dev/null 2>&1"]
       interval: 30s
@@ -154,7 +187,7 @@ services:
       start_period: 120s
     volumes:
       - clamav-db:/var/lib/clamav
-    mem_limit: 1536m
+    mem_limit: 2g
     cpus: 1.0
 
 networks:
