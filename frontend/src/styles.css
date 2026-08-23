@@ -15,6 +15,7 @@
   --cyan: #18a9c6;
   --danger: #d94a59;
   --success: #1e9c70;
+  --warning: #a86308;
   --shadow: 0 24px 70px rgba(31, 42, 68, 0.12);
 }
 
@@ -34,6 +35,7 @@
   --cyan: #43c8df;
   --danger: #ff7d8a;
   --success: #58d5a7;
+  --warning: #f2b65b;
   --shadow: 0 28px 80px rgba(0, 0, 0, 0.36);
 }
 
@@ -94,6 +96,8 @@ main { width: min(1080px, calc(100% - 40px)); margin: 20px auto 0; position: rel
 .pdf-actions::-webkit-scrollbar { display: none; }
 .pdf-actions button { flex: 1 0 auto; min-height: 39px; padding: 0 14px; border: 1px solid var(--line); border-radius: 10px; background: var(--surface); color: var(--muted); font-size: 12px; font-weight: 700; cursor: pointer; }
 .pdf-actions button.active { color: var(--accent); border-color: color-mix(in srgb, var(--accent), var(--line)); background: var(--accent-soft); }
+.document-actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); overflow: visible; }
+.document-actions button { min-width: 0; }
 
 .workspace-card { border: 1px solid var(--line); border-radius: 24px; background: var(--surface); box-shadow: var(--shadow); backdrop-filter: blur(20px); overflow: hidden; }
 .workspace-grid { min-height: 410px; display: grid; grid-template-columns: minmax(0, 1.55fr) minmax(300px, .9fr); }
@@ -158,6 +162,11 @@ main { width: min(1080px, calc(100% - 40px)); margin: 20px auto 0; position: rel
 .job-copy strong, .job-panel.failure strong { font-size: 12px; }
 .job-copy small { color: var(--muted); font-size: 10px; }
 .job-copy .progress-meta { font-variant-numeric: tabular-nums; }
+.job-warnings { display: grid; gap: 5px; margin-top: 2px; }
+.job-copy .job-warnings-title { color: var(--warning); font-weight: 800; }
+.job-warnings ul { display: grid; gap: 4px; margin: 0; padding: 0; list-style: none; }
+.job-warnings li { display: flex; align-items: flex-start; gap: 6px; color: var(--muted); font-size: 10px; line-height: 1.4; }
+.job-warnings li span { width: 15px; height: 15px; display: inline-grid; place-items: center; flex: 0 0 auto; border-radius: 50%; color: var(--warning); background: color-mix(in srgb, var(--warning), transparent 87%); font-size: 9px; font-weight: 850; }
 .job-panel.failure div { flex: 1; }
 .job-panel.failure p { margin: 5px 0 0; color: var(--muted); font-size: 11px; }
 .progress { width: min(360px, 100%); height: 4px; border-radius: 99px; background: var(--surface-soft); overflow: hidden; }
@@ -216,6 +225,7 @@ footer a:hover { color: var(--accent); }
   .hero-copy p { font-size: 14px; }
   .mode-switcher { grid-template-columns: 1fr; }
   .mode-switcher button { min-height: 68px; }
+  .document-actions { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   .workspace-grid { grid-template-columns: 1fr; }
   .upload-column { padding: 15px; border-right: 0; border-bottom: 1px solid var(--line); }
   .settings-column { padding: 21px 17px; }

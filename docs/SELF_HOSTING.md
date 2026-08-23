@@ -13,7 +13,9 @@ chmod 600 .env
 docker compose up -d --build
 ```
 
-The base stack includes Nginx, FastAPI, Redis, ClamAV and four isolated workers. By default it calls the URLs in `.env.example` for the two AI operations. All image conversion, document conversion and PDF work stays inside this stack.
+The base stack includes Nginx, FastAPI, Redis, ClamAV and four isolated workers. The backend image includes headless LibreOffice Writer and Calc plus fonts used for document and spreadsheet conversion. By default it calls the URLs in `.env.example` for the two AI operations. All image conversion, document and spreadsheet conversion, and PDF work stays inside this stack.
+
+The local-operation workers and cleanup service attach only to the `local-no-egress` Docker network, which is declared with `internal: true`. Redis and ClamAV attach to both networks so the isolated services can reach their queue and scanner dependencies without gaining an internet route. The API, AI workers and optional AI services remain on the existing egress-capable network because configured AI endpoints and model downloads may require outbound access. ClamAV also retains that network for signature updates.
 
 For a public host, put a TLS reverse proxy in front of the loopback-only gateway (`127.0.0.1:9080`). Do not expose Redis, ClamAV or worker ports.
 
@@ -77,8 +79,45 @@ The trailing slash in the second `proxy_pass` intentionally maps `/bgr1/process`
 
 ## 4. Operations and updates
 
+The release helper expects immutable releases under `/opt/gpthub-tools/releases`, persistent state under `/opt/gpthub-tools/shared`, and a server-only `/opt/gpthub-tools/shared/.env`. Run it from the new release directory:
+
+```bash
+cd /opt/gpthub-tools/releases/<release-id>
+APP_ROOT=/opt/gpthub-tools \
+  DEPLOY_BACKEND_IMAGE_BYTES=<measured-image-size-in-bytes> \
+  bash deploy/activate-release.sh <release-id>
+```
+
+Build and verify the backend image on a trusted workstation first, then record its logical byte size:
+
+```bash
+docker build --pull -t gpthub-tools-backend:release-check backend
+docker image inspect gpthub-tools-backend:release-check --format '{{.Size}}'
+```
+
+`DEPLOY_BACKEND_IMAGE_BYTES` is mandatory. Before building on the server, activation requires free space equal to `max(5 GiB, 2 x measured backend image size + 1 GiB)`. `DEPLOY_MIN_FREE_MIB` can raise this guard for a host-specific reserve, but cannot lower the image-derived requirement:
+
+```bash
+DEPLOY_MIN_FREE_MIB=8192 \
+  DEPLOY_BACKEND_IMAGE_BYTES=<measured-image-size-in-bytes> \
+  APP_ROOT=/opt/gpthub-tools \
+  bash deploy/activate-release.sh <release-id>
+```
+
+After the new stack passes its health check, the helper atomically records the old `current` target as `previous` and switches `current` to the new release. It then removes only unused, older `gpthub-tools-backend:<release>` and `gpthub-tools-gateway:<release>` image tags. Images for the active and immediately previous releases are retained, and any image still referenced by a container is skipped. The helper never runs a global Docker prune and does not delete BuildKit cache, release directories, logs or shared job/metrics data.
+
+Roll back to a retained release by ID:
+
+```bash
+APP_ROOT=/opt/gpthub-tools \
+  bash /opt/gpthub-tools/current/deploy/rollback.sh <release-id>
+```
+
+Office conversions are CPU-, memory- and temporary-storage-intensive. Keep the default local-worker concurrency at one per container until real workloads show safe headroom, and monitor the worker memory limits and `/tmp` tmpfs. Password-protected and macro-bearing Office inputs are rejected; conversion is best effort and is not a substitute for opening untrusted files in an isolated document-review workflow. See [Word and spreadsheet conversions](OFFICE_CONVERSIONS.md) for formats, options, limits and stable warning/error codes.
+
 - Keep `.env`, model directories, logs, uploaded files and TLS certificates off GitHub.
 - Restrict the AI host firewall so that only the Tools host or private overlay can reach it.
+- Keep Office conversion on the no-egress local workers; do not attach `worker-local-1`, `worker-local-2` or `cleanup` to the egress-capable network.
 - Keep one AI worker per GPU-heavy service instance unless you have measured safe VRAM headroom.
 - Build and test a new image before changing the public reverse proxy; retain a previous release for rollback.
 - The model weights and their upstream licenses are separate from this AGPL application. Review the upstream terms before redistributing weights.

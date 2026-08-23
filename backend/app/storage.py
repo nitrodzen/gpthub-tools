@@ -13,7 +13,7 @@ from typing import Any
 from redis.asyncio import Redis
 
 from .config import settings
-from .models import ApiError, ErrorCode, JobStatus, JobView, Operation
+from .models import ApiError, ErrorCode, JobStatus, JobView, JobWarning, Operation
 
 
 def utcnow() -> datetime:
@@ -42,7 +42,7 @@ def active_jobs_key(ip_hash: str) -> str:
 
 async def reserve_active_job(redis: Redis, ip_hash: str, job_id: str) -> bool:
     now = time.time()
-    expires_at = now + settings.job_timeout_seconds + 300
+    expires_at = now + settings.job_ttl_seconds
     reserved = await redis.eval(
         """
         local key_type = redis.call('TYPE', KEYS[1])['ok']
@@ -70,7 +70,7 @@ async def reserve_active_job(redis: Redis, ip_hash: str, job_id: str) -> bool:
         settings.max_active_jobs_per_ip,
         expires_at,
         job_id,
-        settings.job_timeout_seconds + 300,
+        settings.job_ttl_seconds,
     )
     return bool(reserved)
 
@@ -107,6 +107,11 @@ def create_job_directory(job_id: str) -> Path:
     return root
 
 
+def job_expiration() -> tuple[str, float]:
+    expires = utcnow() + timedelta(seconds=settings.job_ttl_seconds)
+    return iso(expires), expires.timestamp()
+
+
 def delete_job_directory(job_id: str) -> None:
     shutil.rmtree(job_path(job_id), ignore_errors=True)
 
@@ -122,7 +127,7 @@ async def create_job_record(
     options: dict[str, Any],
 ) -> dict[str, str]:
     created = utcnow()
-    expires = created + timedelta(seconds=settings.result_ttl_seconds)
+    expires_at, _expires_score = job_expiration()
     record = {
         "job_id": job_id,
         "token_hash": token_digest(token),
@@ -131,15 +136,20 @@ async def create_job_record(
         "progress": "0",
         "total": str(len(files)),
         "created_at": iso(created),
-        "expires_at": iso(expires),
+        "expires_at": expires_at,
         "ip_hash": ip_hash,
         "files": json.dumps(files, ensure_ascii=False),
         "options": json.dumps(options, ensure_ascii=False),
+        "warnings": "[]",
     }
     await redis.hset(f"job:{job_id}", mapping=record)
     await redis.expire(f"job:{job_id}", settings.job_ttl_seconds)
-    await redis.zadd("job-expirations", {job_id: expires.timestamp()})
     return record
+
+
+def result_expiration() -> tuple[str, float]:
+    expires = utcnow() + timedelta(seconds=settings.result_ttl_seconds)
+    return iso(expires), expires.timestamp()
 
 
 async def get_job_record(redis: Redis, job_id: str) -> dict[str, str] | None:
@@ -161,6 +171,14 @@ def record_to_view(record: dict[str, str]) -> JobView:
             message=record.get("error_message", ""),
             details=details,
         )
+    warnings: list[JobWarning] = []
+    if record.get("warnings"):
+        try:
+            payload = json.loads(record["warnings"])
+            if isinstance(payload, list):
+                warnings = [JobWarning.model_validate(item) for item in payload]
+        except (json.JSONDecodeError, TypeError, ValueError):
+            warnings = []
     return JobView(
         jobId=record["job_id"],
         operation=Operation(record["operation"]),
@@ -171,6 +189,7 @@ def record_to_view(record: dict[str, str]) -> JobView:
         expiresAt=record["expires_at"],
         resultName=record.get("result_name"),
         resultType=record.get("result_type"),
+        warnings=warnings,
         error=error,
     )
 

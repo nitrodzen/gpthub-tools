@@ -114,6 +114,13 @@ class FakeJobRedis:
     async def hset(self, _key: str, mapping: dict[str, str]) -> None:
         self.hset_calls.append(mapping)
 
+    async def eval(self, _script: str, key_count: int, *values: str) -> str:
+        args = values[key_count:]
+        previous = self.record.get("status", "")
+        if previous in args[:2]:
+            self.record["status"] = args[2]
+        return previous
+
 
 @pytest.mark.asyncio
 async def test_delete_completed_job_keeps_metrics_but_removes_result(monkeypatch) -> None:

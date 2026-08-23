@@ -15,6 +15,8 @@ class Operation(StrEnum):
     PDF_SPLIT = "pdf-split"
     IMAGES_TO_PDF = "images-to-pdf"
     PDF_TO_IMAGES = "pdf-to-images"
+    WORD_TO_EXCEL = "word-to-excel"
+    EXCEL_TO_WORD = "excel-to-word"
 
 
 AI_OPERATIONS = {Operation.UPSCALE, Operation.REMOVE_BACKGROUND}
@@ -41,6 +43,11 @@ class ErrorCode(StrEnum):
     PDF_NO_TEXT_LAYER = "PDF_NO_TEXT_LAYER"
     PDF_PASSWORD_PROTECTED = "PDF_PASSWORD_PROTECTED"
     PDF_TOO_MANY_PAGES = "PDF_TOO_MANY_PAGES"
+    OFFICE_PASSWORD_PROTECTED = "OFFICE_PASSWORD_PROTECTED"
+    OFFICE_MACROS_NOT_ALLOWED = "OFFICE_MACROS_NOT_ALLOWED"
+    OFFICE_TOO_COMPLEX = "OFFICE_TOO_COMPLEX"
+    OFFICE_CONVERSION_FAILED = "OFFICE_CONVERSION_FAILED"
+    CSV_PARSE_FAILED = "CSV_PARSE_FAILED"
     IMAGE_TOO_LARGE = "IMAGE_TOO_LARGE"
     UPSTREAM_ERROR = "UPSTREAM_ERROR"
     TIMEOUT = "TIMEOUT"
@@ -53,6 +60,12 @@ class ErrorCode(StrEnum):
 
 class ApiError(BaseModel):
     code: ErrorCode
+    message: str
+    details: dict[str, Any] | None = None
+
+
+class JobWarning(BaseModel):
+    code: str
     message: str
     details: dict[str, Any] | None = None
 
@@ -76,6 +89,7 @@ class JobView(BaseModel):
     expires_at: str = Field(alias="expiresAt")
     result_name: str | None = Field(default=None, alias="resultName")
     result_type: str | None = Field(default=None, alias="resultType")
+    warnings: list[JobWarning] = Field(default_factory=list)
     error: ApiError | None = None
 
     model_config = {"populate_by_name": True}

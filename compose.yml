@@ -80,6 +80,8 @@ services:
       <<: *backend-env
       ARQ_QUEUE: local
       WORKER_CONCURRENCY: 1
+    networks:
+      - local-no-egress
     depends_on:
       redis:
         condition: service_healthy
@@ -112,6 +114,8 @@ services:
   cleanup:
     <<: *backend
     command: ["python", "-m", "app.cleanup"]
+    networks:
+      - local-no-egress
     depends_on:
       redis:
         condition: service_healthy
@@ -123,6 +127,7 @@ services:
     command: ["redis-server", "--save", "", "--appendonly", "no", "--maxmemory", "128mb", "--maxmemory-policy", "allkeys-lru"]
     networks:
       - internal
+      - local-no-egress
     restart: unless-stopped
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
@@ -145,6 +150,7 @@ services:
       CLAMD_CONF_MaxScanSize: 260M
     networks:
       - internal
+      - local-no-egress
     restart: unless-stopped
     entrypoint: ["/bin/sh", "-ec"]
     command:
@@ -193,6 +199,8 @@ services:
 networks:
   internal:
     internal: false
+  local-no-egress:
+    internal: true
 
 volumes:
   clamav-db:

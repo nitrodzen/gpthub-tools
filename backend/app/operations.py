@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import json
+import os
 import re
 import shutil
+import signal
 import subprocess
+import sys
+import uuid
 import zipfile
 from pathlib import Path
 from typing import Any
@@ -17,7 +22,8 @@ from PIL import Image, ImageOps
 from pillow_heif import register_heif_opener
 
 from .config import settings
-from .models import ErrorCode, JobFailure, Operation
+from .models import ErrorCode, JobFailure, JobWarning, Operation
+from .office_operations import OperationResult
 
 register_heif_opener()
 
@@ -28,8 +34,117 @@ MIME_BY_SUFFIX = {
     ".webp": "image/webp",
     ".pdf": "application/pdf",
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".zip": "application/zip",
 }
+
+
+async def terminate_office_process(process: asyncio.subprocess.Process) -> None:
+    if process.returncode is not None:
+        return
+    try:
+        if os.name == "posix":
+            os.killpg(process.pid, signal.SIGKILL)
+        else:
+            process.kill()
+    except ProcessLookupError:
+        pass
+    await process.wait()
+
+
+async def run_office_isolated(
+    operation: Operation,
+    files: list[dict[str, Any]],
+    output_dir: Path,
+    options: dict[str, Any],
+) -> OperationResult:
+    identifier = uuid.uuid4().hex
+    control_path = output_dir / f".office-control-{identifier}.json"
+    response_path = output_dir / f".office-result-{identifier}.json"
+    control_path.write_text(
+        json.dumps(
+            {
+                "operation": operation.value,
+                "files": files,
+                "outputDir": str(output_dir),
+                "options": options,
+                "timeoutSeconds": settings.job_timeout_seconds,
+            },
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    process_kwargs: dict[str, Any] = {}
+    if os.name == "posix":
+        process_kwargs["start_new_session"] = True
+    else:
+        process_kwargs["creationflags"] = subprocess.CREATE_NEW_PROCESS_GROUP
+    process: asyncio.subprocess.Process | None = None
+    try:
+        process = await asyncio.create_subprocess_exec(
+            sys.executable,
+            "-m",
+            "app.office_runner",
+            str(control_path),
+            str(response_path),
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+            **process_kwargs,
+        )
+        try:
+            async with asyncio.timeout(settings.job_timeout_seconds):
+                return_code = await process.wait()
+        except TimeoutError as exc:
+            await terminate_office_process(process)
+            raise JobFailure(ErrorCode.TIMEOUT, "Office conversion timed out") from exc
+        except asyncio.CancelledError:
+            await terminate_office_process(process)
+            raise
+        if not response_path.is_file():
+            raise JobFailure(
+                ErrorCode.OFFICE_CONVERSION_FAILED,
+                "The isolated Office converter did not return a result",
+                {"exitCode": return_code},
+            )
+        try:
+            payload = json.loads(response_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as exc:
+            raise JobFailure(
+                ErrorCode.OFFICE_CONVERSION_FAILED,
+                "The isolated Office converter returned invalid data",
+            ) from exc
+        if not payload.get("ok"):
+            error = payload.get("error") or {}
+            try:
+                code = ErrorCode(error.get("code"))
+            except ValueError:
+                code = ErrorCode.OFFICE_CONVERSION_FAILED
+            raise JobFailure(
+                code,
+                str(error.get("message") or "The Office file could not be converted"),
+                error.get("details") if isinstance(error.get("details"), dict) else None,
+            )
+        try:
+            result_path = Path(payload["path"]).resolve(strict=True)
+            expected_root = output_dir.resolve(strict=True)
+            warnings = [JobWarning.model_validate(item) for item in payload.get("warnings", [])]
+        except (KeyError, OSError, TypeError, ValueError) as exc:
+            raise JobFailure(
+                ErrorCode.OFFICE_CONVERSION_FAILED,
+                "The isolated Office converter returned an invalid result",
+            ) from exc
+        if expected_root not in result_path.parents:
+            raise JobFailure(
+                ErrorCode.OFFICE_CONVERSION_FAILED,
+                "The isolated Office converter returned an invalid path",
+            )
+        return OperationResult(result_path, warnings)
+    finally:
+        if process is not None and process.returncode is None:
+            await terminate_office_process(process)
+        control_path.unlink(missing_ok=True)
+        response_path.unlink(missing_ok=True)
 
 
 def clean_stem(name: str) -> str:
@@ -416,7 +531,7 @@ def pdf_to_images(files: list[dict[str, Any]], output_dir: Path, options: dict[s
 
 async def execute(
     operation: Operation, files: list[dict[str, Any]], output_dir: Path, options: dict[str, Any]
-) -> Path:
+) -> OperationResult:
     if operation is Operation.UPSCALE:
         result = await upscale(files, output_dir, options)
     elif operation is Operation.REMOVE_BACKGROUND:
@@ -433,10 +548,18 @@ async def execute(
         result = await asyncio.to_thread(images_to_pdf, files, output_dir, options)
     elif operation is Operation.PDF_TO_IMAGES:
         result = await asyncio.to_thread(pdf_to_images, files, output_dir, options)
+    elif operation is Operation.WORD_TO_EXCEL:
+        office_result = await run_office_isolated(operation, files, output_dir, options)
+        ensure_result_limit(office_result.path)
+        return office_result
+    elif operation is Operation.EXCEL_TO_WORD:
+        office_result = await run_office_isolated(operation, files, output_dir, options)
+        ensure_result_limit(office_result.path)
+        return office_result
     else:
         raise JobFailure(ErrorCode.UNSUPPORTED_FORMAT, "Unknown operation")
     ensure_result_limit(result)
-    return result
+    return OperationResult(result)
 
 
 def result_mime(path: Path) -> str:

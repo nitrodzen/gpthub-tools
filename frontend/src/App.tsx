@@ -5,6 +5,9 @@ import { getCopy, type Language } from './i18n'
 type Tab = 'upscale' | 'remove' | 'convert'
 type ConvertMode = 'images' | 'documents' | 'pdf'
 type PdfAction = 'pdf-merge' | 'pdf-split' | 'images-to-pdf' | 'pdf-to-images'
+type DocumentAction = 'word-to-pdf' | 'pdf-to-word' | 'word-to-excel' | 'excel-to-word'
+type CsvDelimiter = 'auto' | 'comma' | 'semicolon' | 'tab' | 'pipe'
+type CsvEncoding = 'auto' | 'utf-8' | 'windows-1251'
 type Theme = 'light' | 'dark'
 type FormError = { message: string; code?: string }
 type TrackedJob = {
@@ -26,6 +29,20 @@ type TrackedJobs = Partial<Record<Tab, TrackedJob>>
 
 const MAX_UPSCALE_OUTPUT_PIXELS = 420_000_000
 const TRACKED_JOBS_STORAGE_KEY = 'gpthub-tracked-jobs-v1'
+const DEFAULT_DOCUMENT_ACTION: DocumentAction = 'word-to-pdf'
+const DOCUMENT_ACTIONS: DocumentAction[] = ['word-to-pdf', 'pdf-to-word', 'word-to-excel', 'excel-to-word']
+const DOCUMENT_OPERATIONS: Record<DocumentAction, Operation> = {
+  'word-to-pdf': 'document-convert',
+  'pdf-to-word': 'document-convert',
+  'word-to-excel': 'word-to-excel',
+  'excel-to-word': 'excel-to-word',
+}
+const DOCUMENT_ACCEPTS: Record<DocumentAction, string> = {
+  'word-to-pdf': '.doc,.docx,.odt,.rtf',
+  'pdf-to-word': '.pdf',
+  'word-to-excel': '.doc,.docx,.odt,.rtf',
+  'excel-to-word': '.xls,.xlsx,.ods,.csv',
+}
 const READY_FAVICON = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#18a86b"/><path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="7" d="m17 33 10 10 21-23"/></svg>')}`
 
 function setFavicon(href: string) {
@@ -84,7 +101,7 @@ export function estimateDuration(operation: Operation, scale: number, fileCount:
   const megapixels = inputPixels / 1_000_000
   if (operation === 'upscale') return Math.round((scale === 4 ? 90 * count + megapixels * 30 : 60 * count + megapixels * 12))
   if (operation === 'remove-background') return 60 * count
-  if (operation === 'document-convert') return 45 * count
+  if (operation === 'document-convert' || operation === 'word-to-excel' || operation === 'excel-to-word') return 45 * count
   if (operation === 'pdf-to-images') return 75
   return Math.max(8, 8 * count)
 }
@@ -112,7 +129,9 @@ function routeState() {
     : path.startsWith('/convert/pdf')
       ? 'pdf'
       : 'images'
-  return { tab, mode }
+  const documentAction = DOCUMENT_ACTIONS.find((action) => path === `/convert/documents/${action}` || path.startsWith(`/convert/documents/${action}/`)) || DEFAULT_DOCUMENT_ACTION
+  const normalizeDocumentsRoute = path === '/convert/documents' || path === '/convert/documents/'
+  return { tab, mode, documentAction, normalizeDocumentsRoute }
 }
 
 function SunIcon() {
@@ -335,9 +354,10 @@ function formatBytes(bytes: number) {
 }
 
 export default function App() {
-  const initial = routeState()
+  const [initial] = useState(routeState)
   const [tab, setTab] = useState<Tab>(initial.tab)
   const [mode, setMode] = useState<ConvertMode>(initial.mode)
+  const [documentAction, setDocumentAction] = useState<DocumentAction>(initial.documentAction)
   const [pdfAction, setPdfAction] = useState<PdfAction>('pdf-merge')
   const [files, setFiles] = useState<File[]>([])
   const [language, setLanguage] = useState<Language>(() => (localStorage.getItem('gpthub-language') as Language) || 'ru')
@@ -356,6 +376,8 @@ export default function App() {
   const [orientation, setOrientation] = useState('auto')
   const [margin, setMargin] = useState(10)
   const [dpi, setDpi] = useState(150)
+  const [csvDelimiter, setCsvDelimiter] = useState<CsvDelimiter>('auto')
+  const [csvEncoding, setCsvEncoding] = useState<CsvEncoding>('auto')
   const [trackedJobs, setTrackedJobs] = useState<TrackedJobs>(readTrackedJobs)
   const [error, setError] = useState<FormError | null>(null)
   const [submitting, setSubmitting] = useState(false)
@@ -390,6 +412,25 @@ export default function App() {
     return URL.createObjectURL(visibleTrackedJob.sourceFiles[0])
   }, [visibleTrackedJob?.sourceFiles])
 
+  useEffect(() => {
+    if (!initial.normalizeDocumentsRoute) return
+    window.history.replaceState({}, '', `/convert/documents/${DEFAULT_DOCUMENT_ACTION}${window.location.search}${window.location.hash}`)
+  }, [initial.normalizeDocumentsRoute])
+  useEffect(() => {
+    const syncRoute = () => {
+      const next = routeState()
+      setTab(next.tab)
+      setMode(next.mode)
+      setDocumentAction(next.documentAction)
+      setFiles([])
+      setError(null)
+      if (next.normalizeDocumentsRoute) {
+        window.history.replaceState({}, '', `/convert/documents/${DEFAULT_DOCUMENT_ACTION}${window.location.search}${window.location.hash}`)
+      }
+    }
+    window.addEventListener('popstate', syncRoute)
+    return () => window.removeEventListener('popstate', syncRoute)
+  }, [])
   useEffect(() => () => { if (originalUrl) URL.revokeObjectURL(originalUrl) }, [originalUrl])
   useEffect(() => { trackedJobsRef.current = trackedJobs }, [trackedJobs])
   useEffect(() => { tabRef.current = tab }, [tab])
@@ -524,7 +565,18 @@ export default function App() {
 
   const navigateMode = (next: ConvertMode) => {
     setMode(next)
-    window.history.pushState({}, '', `/convert/${next}`)
+    if (next === 'documents') {
+      setDocumentAction(DEFAULT_DOCUMENT_ACTION)
+      window.history.pushState({}, '', `/convert/documents/${DEFAULT_DOCUMENT_ACTION}`)
+    } else {
+      window.history.pushState({}, '', `/convert/${next}`)
+    }
+    resetForm()
+  }
+
+  const navigateDocumentAction = (next: DocumentAction) => {
+    setDocumentAction(next)
+    window.history.pushState({}, '', `/convert/documents/${next}`)
     resetForm()
   }
 
@@ -541,7 +593,7 @@ export default function App() {
   let operation: Operation = 'upscale'
   if (tab === 'remove') operation = 'remove-background'
   if (tab === 'convert' && mode === 'images') operation = 'image-convert'
-  if (tab === 'convert' && mode === 'documents') operation = 'document-convert'
+  if (tab === 'convert' && mode === 'documents') operation = DOCUMENT_OPERATIONS[documentAction]
   if (tab === 'convert' && mode === 'pdf') operation = pdfAction
   const showsImageFormat = ['upscale', 'remove-background', 'image-convert', 'pdf-to-images'].includes(operation)
   const showsQuality = showsImageFormat && (format === 'jpeg' || format === 'webp')
@@ -553,12 +605,26 @@ export default function App() {
     : copy.qualityHintEstimate.replace('{min}', String(estimatedSavingMin)).replace('{max}', String(estimatedSavingMax))
   const formatHint = format === 'png' ? copy.formatPngHint : format === 'webp' ? copy.formatWebpHint : copy.formatJpegHint
   const dpiHint = dpi === 150 ? copy.dpi150Hint : copy.dpi300Hint
+  const documentActionHelp = documentAction === 'word-to-pdf'
+    ? copy.wordToPdfHelp
+    : documentAction === 'pdf-to-word'
+      ? copy.pdfToWordHelp
+      : documentAction === 'word-to-excel'
+        ? copy.wordToExcelHelp
+        : copy.excelToWordHelp
+  const documentActionNotice = documentAction === 'word-to-pdf'
+    ? copy.wordToPdfNotice
+    : documentAction === 'pdf-to-word'
+      ? copy.pdfToWordNotice
+      : documentAction === 'word-to-excel'
+        ? copy.wordToExcelNotice
+        : copy.excelToWordNotice
 
   const accept = useMemo(() => {
     if (tab !== 'convert' || mode === 'images' || (mode === 'pdf' && pdfAction === 'images-to-pdf')) return '.png,.jpg,.jpeg,.webp,.heic,.heif,.tif,.tiff,.bmp'
-    if (mode === 'documents') return '.doc,.docx,.odt,.rtf,.pdf'
+    if (mode === 'documents') return DOCUMENT_ACCEPTS[documentAction]
     return '.pdf'
-  }, [tab, mode, pdfAction])
+  }, [tab, mode, documentAction, pdfAction])
 
   const submit = async () => {
     if (submittingRef.current || busy) return
@@ -579,6 +645,8 @@ export default function App() {
     if (targetOperation === 'pdf-split') Object.assign(options, { mode: splitMode, ranges })
     if (targetOperation === 'images-to-pdf') Object.assign(options, { pageSize, orientation, margin })
     if (targetOperation === 'pdf-to-images') Object.assign(options, { format, quality, dpi })
+    if (targetOperation === 'word-to-excel') Object.assign(options, { locale: language })
+    if (targetOperation === 'excel-to-word') Object.assign(options, { locale: language, csvDelimiter, csvEncoding })
     try {
       let pixels = 0
       if (targetOperation === 'upscale') {
@@ -669,8 +737,9 @@ export default function App() {
 
   const title = tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
   const lead = tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
-  const visibleError = visibleTrackedJob?.error || error
+  const visibleError = visibleTrackedJob?.error || visibleJob?.error || error
   const localizedError = visibleError?.code ? copy.errors[visibleError.code] || visibleError.message : visibleError?.message
+  const localizedWarnings = (visibleJob?.warnings || []).map((warning) => copy.warnings[warning.code] || warning.message || warning.code)
   const startedAt = visibleJob?.createdAt ? Date.parse(visibleJob.createdAt) : visibleTrackedJob?.submittedAt
   const elapsedSeconds = startedAt ? Math.max(0, Math.floor((clock - startedAt) / 1000)) : 0
   const estimatedSeconds = estimateDuration(visibleTrackedJob?.operation || operation, visibleTrackedJob?.scale || scale, visibleTrackedJob?.fileCount || files.length, visibleTrackedJob?.inputPixels || 0)
@@ -753,6 +822,17 @@ export default function App() {
           </div>
         )}
 
+        {tab === 'convert' && mode === 'documents' && (
+          <div className="pdf-actions document-actions">
+            {([
+              ['word-to-pdf', copy.wordToPdf], ['pdf-to-word', copy.pdfToWord],
+              ['word-to-excel', copy.wordToExcel], ['excel-to-word', copy.excelToWord],
+            ] as [DocumentAction, string][]).map(([value, label]) => (
+              <button key={value} className={documentAction === value ? 'active' : ''} aria-pressed={documentAction === value} onClick={() => navigateDocumentAction(value)}>{label}</button>
+            ))}
+          </div>
+        )}
+
         <section className="workspace-card">
           <div className="workspace-grid">
             <div className="upload-column">
@@ -774,13 +854,14 @@ export default function App() {
               {operation === 'pdf-split' && <><div className="field"><label>{copy.splitMode}</label><select value={splitMode} onChange={(event) => setSplitMode(event.target.value)}><option value="ranges">{copy.byRanges}</option><option value="each">{copy.eachPage}</option></select></div>{splitMode === 'ranges' && <div className="field"><label>{copy.ranges}</label><input value={ranges} onChange={(event) => setRanges(event.target.value)} placeholder={copy.rangesHint} /></div>}</>}
               {operation === 'images-to-pdf' && <><div className="field"><label>{copy.pageSize}</label><select value={pageSize} onChange={(event) => setPageSize(event.target.value)}><option value="a4">{copy.a4}</option><option value="original">{copy.original}</option></select></div><div className="field"><label>{copy.orientation}</label><select value={orientation} onChange={(event) => setOrientation(event.target.value)}><option value="auto">{copy.auto}</option><option value="portrait">{copy.portrait}</option><option value="landscape">{copy.landscape}</option></select></div><div className="field"><label>{copy.margin}<output>{margin}</output></label><input type="range" min="0" max="30" value={margin} onChange={(event) => setMargin(Number(event.target.value))} /></div></>}
               {operation === 'pdf-to-images' && <div className="field"><label><span className="label-with-hint">{copy.dpi}<Hint text={dpiHint} /></span></label><div className="segmented"><button className={dpi === 150 ? 'active' : ''} onClick={() => setDpi(150)}>150 DPI</button><button className={dpi === 300 ? 'active' : ''} onClick={() => setDpi(300)}>300 DPI</button></div></div>}
-              {mode === 'documents' && <div className="notice"><span>i</span><p>{copy.documentHelp}<br /><small>{language === 'ru' ? 'Сканированные PDF без текстового слоя не конвертируются.' : 'Scanned PDFs without a text layer cannot be converted.'}</small></p></div>}
+              {operation === 'excel-to-word' && <><div className="field"><label><span className="label-with-hint">{copy.csvDelimiter}<Hint text={copy.csvDelimiterHint} /></span></label><select value={csvDelimiter} aria-label={copy.csvDelimiter} onChange={(event) => setCsvDelimiter(event.target.value as CsvDelimiter)}><option value="auto">{copy.detectAutomatically}</option><option value="comma">{copy.comma}</option><option value="semicolon">{copy.semicolon}</option><option value="tab">{copy.tabDelimiter}</option><option value="pipe">{copy.pipe}</option></select></div><div className="field"><label><span className="label-with-hint">{copy.csvEncoding}<Hint text={copy.csvEncodingHint} /></span></label><select value={csvEncoding} aria-label={copy.csvEncoding} onChange={(event) => setCsvEncoding(event.target.value as CsvEncoding)}><option value="auto">{copy.detectAutomatically}</option><option value="utf-8">UTF-8</option><option value="windows-1251">Windows-1251</option></select></div></>}
+              {mode === 'documents' && <div className="notice"><span>i</span><p>{documentActionHelp}<br /><small>{documentActionNotice}</small></p></div>}
               <button className="primary-button" onClick={() => void submit()} disabled={busy || files.length === 0} aria-busy={busy}><SparkIcon />{busy ? copy.processing : copy.process}</button>
             </div>
           </div>
 
           {(isSubmittingHere || visibleBusy || visibleJob || localizedError) && <div className={`job-panel ${visibleJob?.status === 'succeeded' ? 'success' : localizedError ? 'failure' : ''}`}>
-            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div><div className="job-actions">{visibleTrackedJob && isRunning(visibleJob) ? <button className="cancel-button" onClick={() => void cancel()} disabled={cancelling}>{cancelling ? copy.cancelling : copy.cancel}</button> : null}</div></> : <><span className="status-icon">{visibleJob?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{visibleJob?.status === 'succeeded' ? copy.ready : cancelling ? copy.cancelling : isSubmittingHere ? copy.uploading : visibleJob?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{visibleJob?.resultName && <small>{visibleJob.resultName}</small>}</div><div className="job-actions">{visibleJob?.status === 'succeeded' ? <button className="download-button is-ready" onClick={() => void download()}>{copy.download} ↓</button> : visibleTrackedJob ? <button className="cancel-button" onClick={() => void cancel()} disabled={cancelling}>{cancelling ? copy.cancelling : copy.cancel}</button> : null}</div></>}
+            {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div><div className="job-actions">{visibleTrackedJob && isRunning(visibleJob) ? <button className="cancel-button" onClick={() => void cancel()} disabled={cancelling}>{cancelling ? copy.cancelling : copy.cancel}</button> : null}</div></> : <><span className="status-icon">{visibleJob?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{visibleJob?.status === 'succeeded' ? copy.ready : cancelling ? copy.cancelling : isSubmittingHere ? copy.uploading : visibleJob?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{visibleJob?.resultName && <small>{visibleJob.resultName}</small>}{localizedWarnings.length > 0 && <div className="job-warnings" role="status" aria-label={copy.warningsTitle}><small className="job-warnings-title">{copy.warningsTitle}</small><ul>{localizedWarnings.map((warning, index) => <li key={`${warning}-${index}`}><span aria-hidden="true">!</span>{warning}</li>)}</ul></div>}</div><div className="job-actions">{visibleJob?.status === 'succeeded' ? <button className="download-button is-ready" onClick={() => void download()}>{copy.download} ↓</button> : visibleTrackedJob ? <button className="cancel-button" onClick={() => void cancel()} disabled={cancelling}>{cancelling ? copy.cancelling : copy.cancel}</button> : null}</div></>}
           </div>}
 
           {tab === 'upscale' && visibleTrackedJob?.resultUrl && <div className="result-preview">

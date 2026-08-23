@@ -9,6 +9,8 @@ Public, bilingual file tools for [tools.gpthub.ru](https://tools.gpthub.ru): ima
 - Convert images to PNG, JPEG, or WebP with resizing, compression, EXIF orientation, and metadata removal.
 - Convert DOC, DOCX, ODT, and RTF to PDF with LibreOffice.
 - Convert text-based PDF files to DOCX. Scans without a text layer are rejected; OCR is intentionally out of scope.
+- Convert DOC, DOCX, ODT, and RTF into a single-sheet XLSX layout.
+- Convert XLS, XLSX, ODS, and CSV to DOCX, rendering each non-empty worksheet as a Word table and using saved formula values (or formula text when no cached value exists).
 - Merge and split PDFs, create PDFs from images, and render PDF pages to PNG, JPEG, or WebP.
 - Process up to 20 files asynchronously with one-hour result retention.
 - Keep one task per top-level tool while switching tabs or reloading the page; only short-lived job metadata and its capability token are kept in the browser, never the uploaded file.
@@ -32,6 +34,8 @@ All image conversion, document conversion and PDF operations run locally in isol
 - `GET /api/jobs/{jobId}` returns queue state and progress.
 - `GET /api/jobs/{jobId}/download` downloads the result; `DELETE /api/jobs/{jobId}` cancels and removes it.
 - Send the capability token in the `X-Capability-Token` header for all job-specific `GET` and `DELETE` requests. Keeping it out of URLs prevents it from being recorded in normal access logs.
+
+The structural Office endpoints are `word-to-excel` and `excel-to-word`. Their accepted formats, `locale` and CSV options, warning/error codes, security checks and best-effort layout limits are documented in [Word and spreadsheet conversions](docs/OFFICE_CONVERSIONS.md).
 
 ## Local development
 
@@ -69,7 +73,7 @@ PYTHONPATH=. python -m pytest
 
 Copy `.env.example` to `.env` for overrides. Generate a unique `APP_SECRET` in production. The file is ignored by Git and must remain server-side. The public repository contains no production hostnames, private IPs, TLS material, model weights or runtime data.
 
-Uploads are limited by file size, aggregate job size, type, signature, pixel/page count, malware scan, per-IP rate limits, a maximum of three concurrent jobs per IP, and worker concurrency. Inputs are deleted after processing; results expire after 60 minutes.
+Uploads are limited by file size, aggregate job size, type, signature, pixel/page count, Office structure, malware scan, per-IP rate limits, a maximum of three concurrent jobs per IP, and worker concurrency. Encrypted and macro-bearing Office documents are rejected. Inputs are deleted after processing; results expire after 60 minutes.
 
 The optional metrics database stores only technical aggregates for 365 days. It contains no filenames, file contents, IP addresses, capability tokens, or job options.
 

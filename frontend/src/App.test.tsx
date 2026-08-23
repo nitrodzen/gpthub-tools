@@ -28,6 +28,122 @@ describe('App', () => {
     expect(screen.getByLabelText(/90% уменьшает файл примерно на 15–30%/)).toBeInTheDocument()
   })
 
+  it('normalizes the legacy documents route and exposes action-specific routes and formats', () => {
+    window.history.replaceState({}, '', '/convert/documents')
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+
+    expect(window.location.pathname).toBe('/convert/documents/word-to-pdf')
+    expect(screen.getByRole('button', { name: 'Word → PDF' })).toHaveAttribute('aria-pressed', 'true')
+    expect(input).toHaveAttribute('accept', '.doc,.docx,.odt,.rtf')
+
+    fireEvent.click(screen.getByRole('button', { name: 'PDF → Word' }))
+    expect(window.location.pathname).toBe('/convert/documents/pdf-to-word')
+    expect(input).toHaveAttribute('accept', '.pdf')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Word → Excel' }))
+    expect(window.location.pathname).toBe('/convert/documents/word-to-excel')
+    expect(input).toHaveAttribute('accept', '.doc,.docx,.odt,.rtf')
+
+    fireEvent.click(screen.getByRole('button', { name: 'Excel → Word' }))
+    expect(window.location.pathname).toBe('/convert/documents/excel-to-word')
+    expect(input).toHaveAttribute('accept', '.xls,.xlsx,.ods,.csv')
+  })
+
+  it('follows document routes after browser history navigation and clears staged files', () => {
+    window.history.replaceState({}, '', '/convert/documents/excel-to-word')
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['csv'], 'staged.csv')] } })
+    expect(screen.getByText('staged.csv')).toBeInTheDocument()
+
+    window.history.replaceState({}, '', '/convert/documents/pdf-to-word')
+    fireEvent.popState(window)
+
+    expect(screen.getByRole('button', { name: 'PDF → Word' })).toHaveAttribute('aria-pressed', 'true')
+    expect(input).toHaveAttribute('accept', '.pdf')
+    expect(screen.queryByText('staged.csv')).not.toBeInTheDocument()
+  })
+
+  it('maps Word to Excel to its operation and sends the UI locale', async () => {
+    window.history.replaceState({}, '', '/convert/documents/word-to-excel')
+    apiMocks.createJob.mockReturnValue(new Promise(() => {}))
+    const { container } = render(<App />)
+    const document = new File(['word'], 'tables.docx', { type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document' })
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [document] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+
+    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledWith('word-to-excel', [document], { locale: 'ru' }))
+    expect(estimateDuration('word-to-excel', 2, 3)).toBe(135)
+  })
+
+  it('sends exact CSV controls for Excel to Word', async () => {
+    window.history.replaceState({}, '', '/convert/documents/excel-to-word')
+    apiMocks.createJob.mockReturnValue(new Promise(() => {}))
+    const { container } = render(<App />)
+    const csv = new File(['name;value'], 'table.csv', { type: 'text/csv' })
+
+    fireEvent.change(screen.getByRole('combobox', { name: 'Разделитель CSV' }), { target: { value: 'semicolon' } })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Кодировка CSV' }), { target: { value: 'windows-1251' } })
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [csv] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+
+    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledWith('excel-to-word', [csv], {
+      locale: 'ru', csvDelimiter: 'semicolon', csvEncoding: 'windows-1251',
+    }))
+    expect(estimateDuration('excel-to-word', 2, 2)).toBe(90)
+  })
+
+  it('keeps PDF to Word on the compatible document conversion operation', async () => {
+    window.history.replaceState({}, '', '/convert/documents/pdf-to-word')
+    apiMocks.createJob.mockReturnValue(new Promise(() => {}))
+    const { container } = render(<App />)
+    const pdf = new File(['pdf'], 'source.pdf', { type: 'application/pdf' })
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [pdf] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+
+    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledWith('document-convert', [pdf], {}))
+  })
+
+  it('keeps one converter job while document actions change', async () => {
+    window.history.replaceState({}, '', '/convert/documents/word-to-excel')
+    apiMocks.createJob.mockResolvedValue({
+      jobId: 'office-running', token: 'office-running-token', expiresAt: '2099-07-11T03:00:00Z',
+    })
+    apiMocks.getJob.mockResolvedValue({
+      jobId: 'office-running', operation: 'word-to-excel', status: 'running', progress: 0, total: 1,
+      createdAt: new Date().toISOString(), expiresAt: '2099-07-11T03:00:00Z', warnings: [],
+    })
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]') as HTMLInputElement
+    fireEvent.change(input, { target: { files: [new File(['word'], 'tables.docx')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+    expect(await screen.findByText('Обработка на сервере')).toBeInTheDocument()
+
+    fireEvent.click(screen.getByRole('button', { name: 'Excel → Word' }))
+    fireEvent.change(input, { target: { files: [new File(['csv'], 'table.csv')] } })
+    expect(screen.getByRole('button', { name: 'Обрабатываем файлы' })).toBeDisabled()
+    fireEvent.click(screen.getByRole('button', { name: 'Обрабатываем файлы' }))
+    expect(apiMocks.createJob).toHaveBeenCalledTimes(1)
+  })
+
+  it('localizes Office conversion job errors', async () => {
+    window.history.replaceState({}, '', '/convert/documents/word-to-excel')
+    apiMocks.createJob.mockResolvedValue({
+      jobId: 'office-failed', token: 'office-failed-token', expiresAt: '2099-07-11T03:00:00Z',
+    })
+    apiMocks.getJob.mockResolvedValue({
+      jobId: 'office-failed', operation: 'word-to-excel', status: 'failed', progress: 0, total: 1,
+      createdAt: new Date().toISOString(), expiresAt: '2099-07-11T03:00:00Z',
+      error: { code: 'OFFICE_TOO_COMPLEX', message: 'Backend fallback' }, warnings: [],
+    })
+    const { container } = render(<App />)
+    fireEvent.change(container.querySelector('input[type="file"]') as HTMLInputElement, { target: { files: [new File(['word'], 'complex.docx')] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+
+    expect(await screen.findByText('Документ слишком сложный для надёжной конвертации. Упростите его и повторите попытку.')).toBeInTheDocument()
+  })
+
   it('zooms image panes independently', () => {
     const copy = getCopy('ru')
     render(<><ZoomPane label={copy.before} src="before.png" checkerboard={false} copy={copy} /><ZoomPane label={copy.after} src="after.png" checkerboard={false} copy={copy} /></>)
@@ -198,6 +314,37 @@ describe('App', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Увеличить: готово: 1' }))
     await waitFor(() => expect(screen.getByRole('button', { name: 'Увеличить' })).toBeInTheDocument())
     expect(screen.getByText('Результат готов')).toBeInTheDocument()
+  })
+
+  it('restores and localizes document conversion warnings', async () => {
+    localStorage.setItem('gpthub-tracked-jobs-v1', JSON.stringify({
+      convert: {
+        capability: { jobId: 'stored-office', token: 'stored-office-token', expiresAt: '2099-07-11T03:00:00Z' },
+        tab: 'convert', operation: 'excel-to-word', fileCount: 1, scale: 2, submittedAt: Date.now(), inputPixels: 0,
+        job: {
+          jobId: 'stored-office', operation: 'excel-to-word', status: 'succeeded', progress: 1, total: 1,
+          createdAt: new Date().toISOString(), expiresAt: '2099-07-11T03:00:00Z', resultName: 'table.docx',
+          resultType: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+          warnings: [
+            { code: 'FORMULAS_AS_VALUES', message: 'Backend fallback' },
+            { code: 'CSV_DETECTION_GUESSED', message: 'Backend fallback' },
+          ],
+        },
+        error: null, seen: false,
+      },
+    }))
+    window.history.replaceState({}, '', '/convert/documents/excel-to-word')
+    render(<App />)
+
+    expect(screen.getByLabelText('Предупреждения')).toHaveTextContent('Формулы перенесены как сохранённые значения, а при их отсутствии — как текст формулы.')
+    expect(screen.getByLabelText('Предупреждения')).toHaveTextContent('Кодировка или разделитель CSV определены автоматически; проверьте результат.')
+    await waitFor(() => {
+      const stored = JSON.parse(localStorage.getItem('gpthub-tracked-jobs-v1') || '{}')
+      expect(stored.convert.job.warnings).toHaveLength(2)
+    })
+
+    fireEvent.click(screen.getByRole('button', { name: 'English' }))
+    expect(screen.getByLabelText('Warnings')).toHaveTextContent('Formulas were transferred as saved values, or as formula text when no saved value existed.')
   })
 
   it('includes the support email in the footer', () => {

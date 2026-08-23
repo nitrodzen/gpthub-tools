@@ -52,3 +52,9 @@ jobs:
       - run: docker compose config
       - run: docker compose -f compose.yml -f compose.ai.yml --profile ai config
       - run: docker compose build gateway api
+      - run: >-
+          docker run --rm --network none --read-only --tmpfs /tmp:size=512m,mode=1777
+          -e PYTHONPATH=/app
+          -v "$PWD/backend/tests:/smoke:ro"
+          gpthub-tools-backend:dev
+          python /smoke/container_office_smoke.py

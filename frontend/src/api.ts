@@ -3,6 +3,8 @@ export type Operation =
   | 'remove-background'
   | 'image-convert'
   | 'document-convert'
+  | 'word-to-excel'
+  | 'excel-to-word'
   | 'pdf-merge'
   | 'pdf-split'
   | 'images-to-pdf'
@@ -18,6 +20,11 @@ export type Job = {
   expiresAt: string
   resultName?: string
   resultType?: string
+  warnings?: Array<{
+    code: string
+    message: string
+    details?: Record<string, unknown>
+  }>
   error?: { code: string; message: string }
 }
 

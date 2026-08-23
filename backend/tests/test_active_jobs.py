@@ -1,7 +1,11 @@
+import os
 import time
+from types import SimpleNamespace
+from unittest.mock import AsyncMock
 
 import pytest
 
+from app import cleanup
 from app.storage import active_jobs_key, release_active_job, reserve_active_job
 
 
@@ -36,6 +40,7 @@ class FakeRedis:
         self.zsets[key][job_id] = expires_at
         return 1
 
+
 @pytest.mark.asyncio
 async def test_three_jobs_are_allowed_and_the_slot_is_released() -> None:
     redis = FakeRedis()
@@ -64,3 +69,111 @@ async def test_legacy_single_active_job_key_is_migrated_safely() -> None:
     redis.strings[key] = ("one-more-legacy-job", int(time.time()))
     await release_active_job(redis, ip_hash, "one-more-legacy-job")
     assert key not in redis.strings
+
+
+class CleanupRedis:
+    def __init__(
+        self,
+        record: dict[str, str],
+        expired: list[str] | None = None,
+        live_owners: set[str] | None = None,
+    ) -> None:
+        self.record = record
+        self.expired = expired or []
+        self.live_owners = live_owners or set()
+        self.deleted: list[str] = []
+        self.zremmed: list[tuple[str, str]] = []
+        self.zadded: list[tuple[str, dict[str, float]]] = []
+
+    async def hgetall(self, _key: str) -> dict[str, str]:
+        return dict(self.record)
+
+    async def zrangebyscore(self, *_args, **_kwargs) -> list[str]:
+        return list(self.expired)
+
+    async def delete(self, key: str) -> None:
+        self.deleted.append(key)
+
+    async def zrem(self, key: str, value: str) -> None:
+        self.zremmed.append((key, value))
+
+    async def zadd(self, key: str, mapping: dict[str, float]) -> None:
+        self.zadded.append((key, mapping))
+
+    async def exists(self, key: str) -> bool:
+        return key.removeprefix("worker-heartbeat:") in self.live_owners
+
+
+@pytest.mark.asyncio
+async def test_orphan_scan_keeps_fresh_terminal_result_from_long_queued_job(
+    tmp_path, monkeypatch
+) -> None:
+    job_root = tmp_path / "long-queue"
+    job_root.mkdir()
+    old = time.time() - 7200
+    os.utime(job_root, (old, old))
+    redis = CleanupRedis(
+        {
+            "status": "succeeded",
+            "ip_hash": "ip",
+            "expires_at": "2099-01-01T00:00:00Z",
+        }
+    )
+    monkeypatch.setattr(
+        cleanup,
+        "settings",
+        SimpleNamespace(jobs_root=tmp_path, result_ttl_seconds=3600),
+    )
+
+    assert await cleanup.cleanup_once(redis) == 0
+    assert job_root.exists()
+    assert redis.deleted == []
+
+
+@pytest.mark.asyncio
+async def test_expiration_sweep_does_not_delete_running_job(tmp_path, monkeypatch) -> None:
+    job_root = tmp_path / "running-job"
+    job_root.mkdir()
+    redis = CleanupRedis(
+        {
+            "status": "running",
+            "ip_hash": "ip",
+            "run_token": "token",
+            "run_owner": "owner",
+        },
+        ["running-job"],
+        {"owner"},
+    )
+    release = AsyncMock()
+    monkeypatch.setattr(cleanup, "settings", SimpleNamespace(jobs_root=tmp_path))
+    monkeypatch.setattr(cleanup, "release_active_job", release)
+
+    assert await cleanup.cleanup_expired(redis) == 0
+    assert job_root.exists()
+    assert redis.deleted == []
+    assert redis.zremmed == []
+    assert redis.zadded[0][0] == "job-expirations"
+    release.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_expiration_sweep_cleans_running_job_with_dead_owner(tmp_path, monkeypatch) -> None:
+    job_root = tmp_path / "dead-job"
+    job_root.mkdir()
+    redis = CleanupRedis(
+        {
+            "status": "running",
+            "ip_hash": "ip",
+            "run_token": "token",
+            "run_owner": "dead-owner",
+        },
+        ["dead-job"],
+    )
+    release = AsyncMock()
+    monkeypatch.setattr(cleanup, "settings", SimpleNamespace(jobs_root=tmp_path))
+    monkeypatch.setattr(cleanup, "release_active_job", release)
+
+    assert await cleanup.cleanup_expired(redis) == 1
+    assert not job_root.exists()
+    assert redis.deleted == ["job:dead-job"]
+    release.assert_awaited_once_with(redis, "ip", "dead-job")

@@ -10,4 +10,11 @@ pikepdf==9.11.0
 pypdfium2==4.30.0
 pdf2docx==0.5.13
 PyMuPDF==1.28.0
+python-docx==1.2.0
+openpyxl==3.1.5
+defusedxml==0.7.1
+olefile==0.47
+msoffcrypto-tool==6.0.0
+oletools==0.60.2
+charset-normalizer==3.5.1
 clamd==1.0.2

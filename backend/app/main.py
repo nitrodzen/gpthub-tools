@@ -43,6 +43,7 @@ from .storage import (
     record_to_view,
     release_active_job,
     reserve_active_job,
+    result_expiration,
 )
 
 logger = logging.getLogger(__name__)
@@ -235,9 +236,7 @@ async def get_metrics(
 ):
     headers = {"Cache-Control": "no-store"}
     if not (
-        settings.metrics_api_key
-        and key
-        and hmac.compare_digest(key, settings.metrics_api_key)
+        settings.metrics_api_key and key and hmac.compare_digest(key, settings.metrics_api_key)
     ):
         return Response(status_code=404, headers=headers)
     period = metrics_period(from_value, to, bucket)
@@ -337,7 +336,12 @@ async def create_job(
                 upload, stored_path, per_file_limit, settings.max_job_bytes - total
             )
             total += written
-            await asyncio.to_thread(validate_signature, stored_path, extension)
+            await asyncio.to_thread(
+                validate_signature,
+                stored_path,
+                extension,
+                upload.content_type,
+            )
             if operation is Operation.UPSCALE:
                 await asyncio.to_thread(
                     validate_upscale_dimensions,
@@ -433,6 +437,41 @@ async def authorized_job(redis: Redis, job_id: str, token: str) -> dict[str, str
     return record
 
 
+async def cancel_job_transition(redis: Redis, job_id: str) -> str | None:
+    expires_at, expires_score = result_expiration()
+    previous = await redis.eval(
+        """
+        local status = redis.call('HGET', KEYS[1], 'status')
+        if not status then
+            return ''
+        end
+        if status == ARGV[1] or status == ARGV[2] then
+            redis.call(
+                'HSET', KEYS[1],
+                'status', ARGV[3],
+                'expires_at', ARGV[4]
+            )
+            redis.call('EXPIRE', KEYS[1], ARGV[5])
+            redis.call('ZADD', KEYS[2], ARGV[6], ARGV[7])
+        end
+        return status
+        """,
+        2,
+        f"job:{job_id}",
+        "job-expirations",
+        JobStatus.QUEUED.value,
+        JobStatus.RUNNING.value,
+        JobStatus.CANCELLED.value,
+        expires_at,
+        settings.result_ttl_seconds,
+        expires_score,
+        job_id,
+    )
+    if isinstance(previous, bytes):
+        previous = previous.decode()
+    return previous or None
+
+
 @app.get("/api/jobs/{job_id}", response_model=JobView)
 async def get_job(
     request: Request,
@@ -474,19 +513,19 @@ async def delete_job(
 ):
     redis: Redis = request.app.state.redis
     record = await authorized_job(redis, job_id, token)
-    if record["status"] in {
+    previous_status = await cancel_job_transition(redis, job_id)
+    if previous_status in {
         JobStatus.SUCCEEDED.value,
         JobStatus.FAILED.value,
-        JobStatus.CANCELLED.value,
     }:
         delete_job_directory(job_id)
         await redis.delete(f"job:{job_id}")
         await redis.zrem("job-expirations", job_id)
         return None
-    await redis.hset(f"job:{job_id}", mapping={"status": JobStatus.CANCELLED.value})
+    if previous_status not in {JobStatus.QUEUED.value, JobStatus.RUNNING.value}:
+        return None
     await metrics.record_terminal(job_id=job_id, status=JobStatus.CANCELLED)
-    await redis.zrem("job-expirations", job_id)
-    if record["status"] != JobStatus.RUNNING.value:
+    if previous_status == JobStatus.QUEUED.value:
         delete_job_directory(job_id)
         await release_active_job(redis, record["ip_hash"], job_id)
     return None

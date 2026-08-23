@@ -20,10 +20,8 @@ async def cleanup_once(redis: Redis) -> int:
             continue
         job_id = directory.name
         record = await redis.hgetall(f"job:{job_id}")
-        if not record or record.get("status") in {"succeeded", "failed", "cancelled"}:
+        if not record:
             shutil.rmtree(directory, ignore_errors=True)
-            if record and record.get("ip_hash"):
-                await release_active_job(redis, record["ip_hash"], job_id)
             await redis.delete(f"job:{job_id}")
             await redis.zrem("job-expirations", job_id)
             removed += 1
@@ -36,6 +34,16 @@ async def cleanup_expired(redis: Redis) -> int:
     for raw_job_id in expired:
         job_id = raw_job_id.decode() if isinstance(raw_job_id, bytes) else raw_job_id
         record = await redis.hgetall(f"job:{job_id}")
+        status = record.get("status") if record else None
+        if status == "queued":
+            await redis.zrem("job-expirations", job_id)
+            continue
+        if status == "running" or (status == "cancelled" and record.get("run_token")):
+            owner = record.get("run_owner")
+            owner_is_live = bool(owner and await redis.exists(f"worker-heartbeat:{owner}"))
+            if owner_is_live:
+                await redis.zadd("job-expirations", {job_id: time.time() + 300})
+                continue
         if record.get("ip_hash"):
             await release_active_job(redis, record["ip_hash"], job_id)
         shutil.rmtree(settings.jobs_root / job_id, ignore_errors=True)
