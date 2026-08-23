@@ -1,6 +1,6 @@
 fastapi==0.116.1
 uvicorn[standard]==0.35.0
-python-multipart==0.0.20
+python-multipart==0.0.32
 redis==5.2.1
 arq==0.26.3
 httpx==0.28.1
