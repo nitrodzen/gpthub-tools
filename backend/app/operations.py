@@ -295,6 +295,8 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
                 )
             raw = output_dir / f"upscaled_{clean_stem(item['original'])}_{index}.png"
             raw.write_bytes(validated_upscale_png(response, expected_size))
+            await response.aclose()
+            del response
             if fmt != "png":
                 destination = output_dir / (
                     f"upscaled_{clean_stem(item['original'])}_{index}{image_extension(fmt)}"

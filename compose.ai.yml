@@ -32,7 +32,7 @@ services:
       MODEL_DIR: /models
       MAX_UPLOAD_BYTES: 52428800
       MAX_INPUT_PIXELS: 100000000
-      MAX_OUTPUT_PIXELS: 420000000
+      MAX_OUTPUT_PIXELS: ${MAX_UPSCALE_OUTPUT_PIXELS:-200000000}
       TILE_SIZE: 512
     volumes:
       - ./data/ai-models/realesrgan:/models:ro

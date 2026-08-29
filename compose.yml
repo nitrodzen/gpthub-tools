@@ -21,6 +21,7 @@ x-backend: &backend
     CLAMAV_HOST: clamav
     CLAMAV_REQUIRED: ${CLAMAV_REQUIRED:-true}
     MAX_ACTIVE_JOBS_PER_IP: ${MAX_ACTIVE_JOBS_PER_IP:-3}
+    MAX_UPSCALE_OUTPUT_PIXELS: ${MAX_UPSCALE_OUTPUT_PIXELS:-200000000}
   volumes:
     - ./data/jobs:/data/jobs
     - ./data/metrics:/data/metrics
@@ -105,7 +106,7 @@ services:
         condition: service_healthy
       clamav:
         condition: service_healthy
-    mem_limit: 1g
+    mem_limit: 4g
     cpus: 0.75
 
   worker-ai-2:

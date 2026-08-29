@@ -27,7 +27,7 @@ type TrackedJob = {
 }
 type TrackedJobs = Partial<Record<Tab, TrackedJob>>
 
-const MAX_UPSCALE_OUTPUT_PIXELS = 420_000_000
+const MAX_UPSCALE_OUTPUT_PIXELS = 200_000_000
 const TRACKED_JOBS_STORAGE_KEY = 'gpthub-tracked-jobs-v1'
 const DEFAULT_DOCUMENT_ACTION: DocumentAction = 'word-to-pdf'
 const DOCUMENT_ACTIONS: DocumentAction[] = ['word-to-pdf', 'pdf-to-word', 'word-to-excel', 'excel-to-word']

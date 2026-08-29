@@ -28,7 +28,7 @@ def env_int(name: str, default: int) -> int:
 
 MAX_UPLOAD_BYTES: Final = env_int("MAX_UPLOAD_BYTES", 50 * 1024 * 1024)
 MAX_INPUT_PIXELS: Final = env_int("MAX_INPUT_PIXELS", 100_000_000)
-MAX_OUTPUT_PIXELS: Final = env_int("MAX_OUTPUT_PIXELS", 420_000_000)
+MAX_OUTPUT_PIXELS: Final = env_int("MAX_OUTPUT_PIXELS", 200_000_000)
 TILE_SIZE: Final = env_int("TILE_SIZE", 512)
 MODEL_DIR: Final = Path(os.getenv("MODEL_DIR", "/models"))
 MODEL_FILES: Final = {

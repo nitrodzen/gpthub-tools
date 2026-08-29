@@ -104,6 +104,10 @@ def test_upscale_dimensions_are_limited_before_queueing(tmp_path: Path, monkeypa
     assert failure.value.code == ErrorCode.IMAGE_TOO_LARGE
 
 
+def test_default_upscale_output_limit_matches_the_public_client() -> None:
+    assert security.MAX_UPSCALE_OUTPUT_PIXELS == 200_000_000
+
+
 @pytest.mark.asyncio
 async def test_scanner_readiness_uses_a_short_probe(monkeypatch) -> None:
     monkeypatch.setattr(security, "_scanner_ready_sync", lambda: True)

@@ -115,6 +115,8 @@ APP_ROOT=/opt/gpthub-tools \
 
 Office conversions are CPU-, memory- and temporary-storage-intensive. Keep the default local-worker concurrency at one per container until real workloads show safe headroom, and monitor the worker memory limits and `/tmp` tmpfs. Password-protected and macro-bearing Office inputs are rejected; conversion is best effort and is not a substitute for opening untrusted files in an isolated document-review workflow. See [Word and spreadsheet conversions](OFFICE_CONVERSIONS.md) for formats, options, limits and stable warning/error codes.
 
+Upscale output is limited to 200 million pixels by default through `MAX_UPSCALE_OUTPUT_PIXELS`. The API, workers, browser preflight and optional self-hosted upscaler must use the same value. AI workers run one job at a time with a 4 GiB memory limit so oversized images are rejected before queueing instead of exhausting a worker cgroup.
+
 - Keep `.env`, model directories, logs, uploaded files and TLS certificates off GitHub.
 - Restrict the AI host firewall so that only the Tools host or private overlay can reach it.
 - Keep Office conversion on the no-egress local workers; do not attach `worker-local-1`, `worker-local-2` or `cleanup` to the egress-capable network.
