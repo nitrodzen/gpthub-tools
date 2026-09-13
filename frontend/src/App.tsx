@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { cancelJob, createJob, fetchResult, getJob, type Job, type JobCapability, type Operation } from './api'
 import { getCopy, type Language } from './i18n'
+import { ImageComparison, ModelExplorer, ModelPicker } from './ImageLab'
 
-type Tab = 'upscale' | 'remove' | 'convert'
+type Tab = 'upscale' | 'remove' | 'studio' | 'convert'
 type ConvertMode = 'images' | 'documents' | 'pdf'
 type PdfAction = 'pdf-merge' | 'pdf-split' | 'images-to-pdf' | 'pdf-to-images'
-type DocumentAction = 'word-to-pdf' | 'pdf-to-word' | 'word-to-excel' | 'excel-to-word'
+type DocumentAction = 'word-to-pdf' | 'pdf-to-word' | 'word-to-excel' | 'excel-to-word' | 'ocr'
 type CsvDelimiter = 'auto' | 'comma' | 'semicolon' | 'tab' | 'pipe'
 type CsvEncoding = 'auto' | 'utf-8' | 'windows-1251'
 type Theme = 'light' | 'dark'
@@ -17,6 +18,7 @@ type TrackedJob = {
   sourceFiles: File[]
   fileCount: number
   scale: number
+  model: string
   submittedAt: number
   inputPixels: number
   job: Job | null
@@ -30,18 +32,20 @@ type TrackedJobs = Partial<Record<Tab, TrackedJob>>
 const MAX_UPSCALE_OUTPUT_PIXELS = 200_000_000
 const TRACKED_JOBS_STORAGE_KEY = 'gpthub-tracked-jobs-v1'
 const DEFAULT_DOCUMENT_ACTION: DocumentAction = 'word-to-pdf'
-const DOCUMENT_ACTIONS: DocumentAction[] = ['word-to-pdf', 'pdf-to-word', 'word-to-excel', 'excel-to-word']
+const DOCUMENT_ACTIONS: DocumentAction[] = ['word-to-pdf', 'pdf-to-word', 'word-to-excel', 'excel-to-word', 'ocr']
 const DOCUMENT_OPERATIONS: Record<DocumentAction, Operation> = {
   'word-to-pdf': 'document-convert',
   'pdf-to-word': 'document-convert',
   'word-to-excel': 'word-to-excel',
   'excel-to-word': 'excel-to-word',
+  'ocr': 'ocr',
 }
 const DOCUMENT_ACCEPTS: Record<DocumentAction, string> = {
   'word-to-pdf': '.doc,.docx,.odt,.rtf',
   'pdf-to-word': '.pdf',
   'word-to-excel': '.doc,.docx,.odt,.rtf',
   'excel-to-word': '.xls,.xlsx,.ods,.csv',
+  'ocr': '.pdf,.png,.jpg,.jpeg,.webp,.heic,.heif,.tif,.tiff,.bmp',
 }
 const READY_FAVICON = `data:image/svg+xml,${encodeURIComponent('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64"><rect width="64" height="64" rx="18" fill="#18a86b"/><path fill="none" stroke="#fff" stroke-linecap="round" stroke-linejoin="round" stroke-width="7" d="m17 33 10 10 21-23"/></svg>')}`
 
@@ -64,7 +68,7 @@ function readTrackedJobs(): TrackedJobs {
   try {
     const stored = JSON.parse(localStorage.getItem(TRACKED_JOBS_STORAGE_KEY) || '{}') as Record<string, Partial<TrackedJob>>
     const restored: TrackedJobs = {}
-    for (const tab of ['upscale', 'remove', 'convert'] as Tab[]) {
+    for (const tab of ['upscale', 'remove', 'studio', 'convert'] as Tab[]) {
       const entry = stored[tab]
       if (!entry?.capability?.jobId || !entry.capability.token || !entry.operation || Date.parse(entry.capability.expiresAt || '') <= Date.now()) continue
       restored[tab] = {
@@ -74,6 +78,7 @@ function readTrackedJobs(): TrackedJobs {
         sourceFiles: [],
         fileCount: entry.fileCount || 1,
         scale: entry.scale || 2,
+        model: entry.model || 'standard',
         submittedAt: entry.submittedAt || Date.now(),
         inputPixels: entry.inputPixels || 0,
         job: entry.job || null,
@@ -118,12 +123,13 @@ export function formatDuration(seconds: number, language: Language) {
 const routeForTab: Record<Tab, string> = {
   upscale: '/upscale',
   remove: '/remove-background',
+  studio: '/prepare-image',
   convert: '/convert/images',
 }
 
 function routeState() {
   const path = window.location.pathname
-  const tab: Tab = path.startsWith('/remove-background') ? 'remove' : path.startsWith('/convert') ? 'convert' : 'upscale'
+  const tab: Tab = path.startsWith('/prepare-image') ? 'studio' : path.startsWith('/remove-background') ? 'remove' : path.startsWith('/convert') ? 'convert' : 'upscale'
   const mode: ConvertMode = path.startsWith('/convert/documents')
     ? 'documents'
     : path.startsWith('/convert/pdf')
@@ -368,6 +374,14 @@ export default function App() {
   const [format, setFormat] = useState('webp')
   const [quality, setQuality] = useState(100)
   const [scale, setScale] = useState(2)
+  const [model, setModel] = useState('standard')
+  const [strength, setStrength] = useState(100)
+  const [backgroundPreset, setBackgroundPreset] = useState('fast')
+  const [removeBackground, setRemoveBackground] = useState(true)
+  const [enhance, setEnhance] = useState(false)
+  const [background, setBackground] = useState('transparent')
+  const [ocrFormat, setOcrFormat] = useState('docx')
+  const [ocrLanguage, setOcrLanguage] = useState('rus+eng')
   const [maxWidth, setMaxWidth] = useState('')
   const [maxHeight, setMaxHeight] = useState('')
   const [ranges, setRanges] = useState('1-3')
@@ -592,10 +606,12 @@ export default function App() {
 
   let operation: Operation = 'upscale'
   if (tab === 'remove') operation = 'remove-background'
+  if (tab === 'studio') operation = 'image-pipeline'
+  if (tab === 'upscale' && scale === 1) operation = 'image-enhance'
   if (tab === 'convert' && mode === 'images') operation = 'image-convert'
   if (tab === 'convert' && mode === 'documents') operation = DOCUMENT_OPERATIONS[documentAction]
   if (tab === 'convert' && mode === 'pdf') operation = pdfAction
-  const showsImageFormat = ['upscale', 'remove-background', 'image-convert', 'pdf-to-images'].includes(operation)
+  const showsImageFormat = ['upscale', 'image-enhance', 'image-pipeline', 'remove-background', 'image-convert', 'pdf-to-images'].includes(operation)
   const showsQuality = showsImageFormat && (format === 'jpeg' || format === 'webp')
   const qualityLoss = 100 - quality
   const estimatedSavingMin = Math.min(70, Math.round((qualityLoss * 1.25) / 5) * 5)
@@ -639,8 +655,10 @@ export default function App() {
     setSubmittingTab(targetTab)
     setError(null)
     const options: Record<string, unknown> = {}
-    if (targetOperation === 'upscale') Object.assign(options, { scale: targetScale, format, quality })
-    if (targetOperation === 'remove-background') Object.assign(options, { format, quality })
+    if (targetOperation === 'upscale' || targetOperation === 'image-enhance') Object.assign(options, { scale: targetScale, model, strength, format, quality })
+    if (targetOperation === 'image-pipeline') Object.assign(options, { scale: targetScale, model, strength, format, quality, removeBackground, enhance, background, backgroundPreset, maxWidth: Number(maxWidth) || 0, maxHeight: Number(maxHeight) || 0 })
+    if (targetOperation === 'ocr') Object.assign(options, { format: ocrFormat, language: ocrLanguage })
+    if (targetOperation === 'remove-background') Object.assign(options, { format, quality, backgroundPreset })
     if (targetOperation === 'image-convert') Object.assign(options, { format, quality, maxWidth: Number(maxWidth) || 0, maxHeight: Number(maxHeight) || 0 })
     if (targetOperation === 'pdf-split') Object.assign(options, { mode: splitMode, ranges })
     if (targetOperation === 'images-to-pdf') Object.assign(options, { pageSize, orientation, margin })
@@ -649,7 +667,7 @@ export default function App() {
     if (targetOperation === 'excel-to-word') Object.assign(options, { locale: language, csvDelimiter, csvEncoding })
     try {
       let pixels = 0
-      if (targetOperation === 'upscale') {
+      if (targetOperation === 'upscale' || targetOperation === 'image-pipeline') {
         for (const file of sourceFiles) {
           let filePixels = 0
           try {
@@ -680,6 +698,7 @@ export default function App() {
             sourceFiles,
             fileCount: sourceFiles.length,
             scale: targetScale,
+            model,
             submittedAt: started,
             inputPixels: pixels,
             job: null,
@@ -735,24 +754,30 @@ export default function App() {
     }
   }
 
-  const title = tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
-  const lead = tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
+  const title = tab === 'studio' ? (language === 'ru' ? 'Подготовка изображений' : 'Prepare images') : tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
+  const lead = tab === 'studio' ? (language === 'ru' ? 'Удалите фон, улучшите изображение и сохраните в нужном размере за один запуск.' : 'Remove backgrounds, enhance and resize your images in one run.') : tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
   const visibleError = visibleTrackedJob?.error || visibleJob?.error || error
   const localizedError = visibleError?.code ? copy.errors[visibleError.code] || visibleError.message : visibleError?.message
   const localizedWarnings = (visibleJob?.warnings || []).map((warning) => copy.warnings[warning.code] || warning.message || warning.code)
   const startedAt = visibleJob?.createdAt ? Date.parse(visibleJob.createdAt) : visibleTrackedJob?.submittedAt
   const elapsedSeconds = startedAt ? Math.max(0, Math.floor((clock - startedAt) / 1000)) : 0
   const estimatedSeconds = estimateDuration(visibleTrackedJob?.operation || operation, visibleTrackedJob?.scale || scale, visibleTrackedJob?.fileCount || files.length, visibleTrackedJob?.inputPixels || 0)
+  const activeOperation = visibleTrackedJob?.operation || operation
+  const variableDuration = ['image-enhance', 'image-pipeline', 'ocr', 'remove-background'].includes(activeOperation) || (activeOperation === 'upscale' && (visibleTrackedJob?.model || model) !== 'standard')
   const progressPercent = visibleJob?.status === 'succeeded'
     ? 100
     : isSubmittingHere
       ? 4
       : visibleJob?.status === 'queued' || !visibleJob
         ? 8
-        : Math.min(94, Math.round(12 + (elapsedSeconds / estimatedSeconds) * 82))
+        : variableDuration
+          ? Math.max(8, Math.min(94, Math.round((visibleJob.progress / Math.max(1, visibleJob.total)) * 100)))
+          : Math.min(94, Math.round(12 + (elapsedSeconds / estimatedSeconds) * 82))
   const remainingSeconds = Math.max(0, estimatedSeconds - elapsedSeconds)
   const progressMeta = visibleJob?.status === 'running'
-    ? remainingSeconds > 0
+    ? variableDuration
+      ? `${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
+      : remainingSeconds > 0
       ? `~${progressPercent}% · ${copy.remaining} ${formatDuration(remainingSeconds, language)} · ${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
       : `~${progressPercent}% · ${copy.almostDone} · ${copy.elapsed} ${formatDuration(elapsedSeconds, language)}`
     : visibleJob?.status === 'queued'
@@ -777,9 +802,9 @@ export default function App() {
 
       <main>
         <nav className="tabs" aria-label="Tools">
-          {(['upscale', 'remove', 'convert'] as Tab[]).map((item) => (
+          {(['upscale', 'remove', 'studio', 'convert'] as Tab[]).map((item) => (
             (() => {
-              const label = item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert
+              const label = item === 'studio' ? (language === 'ru' ? 'Подготовить' : 'Prepare') : item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert
               const readyCount = readyCountByTab(item)
               return <button
                 key={item}
@@ -826,7 +851,7 @@ export default function App() {
           <div className="pdf-actions document-actions">
             {([
               ['word-to-pdf', copy.wordToPdf], ['pdf-to-word', copy.pdfToWord],
-              ['word-to-excel', copy.wordToExcel], ['excel-to-word', copy.excelToWord],
+              ['word-to-excel', copy.wordToExcel], ['excel-to-word', copy.excelToWord], ['ocr', language === 'ru' ? 'Распознать текст' : 'Recognize text'],
             ] as [DocumentAction, string][]).map(([value, label]) => (
               <button key={value} className={documentAction === value ? 'active' : ''} aria-pressed={documentAction === value} onClick={() => navigateDocumentAction(value)}>{label}</button>
             ))}
@@ -838,10 +863,24 @@ export default function App() {
             <div className="upload-column">
               <FileDrop files={files} accept={accept} onAdd={addFiles} copy={copy} />
               <FileList files={files} setFiles={setFiles} copy={copy} />
+              {tab === 'upscale' && <ModelExplorer file={files[0]} model={model} scale={scale} strength={strength} language={language} />}
             </div>
             <div className="settings-column">
               <div className="settings-head"><span>02</span><strong>{language === 'ru' ? 'Настройки' : 'Settings'}</strong></div>
-              {tab === 'upscale' && <div className="field"><label><span className="label-with-hint">{copy.scale}<Hint text={copy.scaleHint} below /></span></label><div className="segmented"><button className={scale === 2 ? 'active' : ''} onClick={() => setScale(2)}>2×</button><button className={scale === 4 ? 'active' : ''} onClick={() => setScale(4)}>4×</button></div></div>}
+              {(tab === 'upscale' || tab === 'studio') && <>
+                {scale !== 1 && <ModelPicker model={model} language={language} onChange={value => { setModel(value); if (value === 'photo') setScale(2) }} />}
+                <div className="field"><label>{copy.scale}</label><div className="segmented scale-options">
+                  <button className={scale === 1 ? 'active' : ''} onClick={() => { setScale(1); setModel('standard') }}>{language === 'ru' ? 'Без увеличения' : 'No enlargement'}</button>
+                  <button className={scale === 2 ? 'active' : ''} onClick={() => setScale(2)}>2×</button>
+                  <button disabled={model === 'photo'} className={scale === 4 ? 'active' : ''} onClick={() => setScale(4)}>4×</button>
+                </div></div>
+                <div className="field"><label htmlFor="enhancement-strength">{language === 'ru' ? 'Сила улучшения' : 'Enhancement strength'} <output>{strength}%</output></label><input id="enhancement-strength" type="range" min="0" max="100" step="10" value={strength} onChange={event => setStrength(Number(event.target.value))} /><small className="field-help">{language === 'ru' ? 'Уменьшите, чтобы бережнее сохранить исходную фактуру.' : 'Lower it to preserve more of the original texture.'}</small></div>
+              </>}
+              {tab === 'studio' && <><label className="check-field"><input type="checkbox" checked={removeBackground} onChange={event => setRemoveBackground(event.target.checked)} />{language === 'ru' ? 'Удалить фон' : 'Remove background'}</label><label className="check-field"><input type="checkbox" checked={enhance} onChange={event => setEnhance(event.target.checked)} />{language === 'ru' ? 'Убрать шум и следы сжатия' : 'Remove noise and compression artifacts'}</label></>}
+              {(tab === 'remove' || (tab === 'studio' && removeBackground)) && <div className="field"><label htmlFor="background-preset">{language === 'ru' ? 'Точность удаления фона' : 'Background removal'}</label><select id="background-preset" value={backgroundPreset} onChange={event => setBackgroundPreset(event.target.value)}><option value="fast">{language === 'ru' ? 'Быстро' : 'Fast'}</option><option value="quality">{language === 'ru' ? 'Точно' : 'Precise'}</option><option value="portrait">{language === 'ru' ? 'Портрет и волосы' : 'Portrait and hair'}</option></select></div>}
+              {tab === 'studio' && <div className="field"><label htmlFor="background-color">{language === 'ru' ? 'Фон результата' : 'Output background'}</label><select id="background-color" value={background === 'transparent' ? 'transparent' : 'color'} onChange={event => setBackground(event.target.value === 'transparent' ? 'transparent' : '#ffffff')}><option value="transparent">{language === 'ru' ? 'Прозрачный' : 'Transparent'}</option><option value="color">{language === 'ru' ? 'Цвет' : 'Color'}</option></select>{background !== 'transparent' && <input type="color" aria-label={language === 'ru' ? 'Цвет фона' : 'Background color'} value={background} onChange={event => setBackground(event.target.value)} />}</div>}
+              {operation === 'ocr' && <><div className="field"><label htmlFor="ocr-format">{copy.format}</label><select id="ocr-format" value={ocrFormat} onChange={event => setOcrFormat(event.target.value)}><option value="docx">Word (DOCX)</option><option value="txt">{language === 'ru' ? 'Текст (TXT)' : 'Text (TXT)'}</option><option value="pdf">{language === 'ru' ? 'PDF с поиском' : 'Searchable PDF'}</option></select></div><div className="field"><label htmlFor="ocr-language">{language === 'ru' ? 'Язык документа' : 'Document language'}</label><select id="ocr-language" value={ocrLanguage} onChange={event => setOcrLanguage(event.target.value)}><option value="rus+eng">Русский + English</option><option value="rus">Русский</option><option value="eng">English</option></select></div><p className="field-help">{language === 'ru' ? 'Сканы PDF и фотографии документов. До 50 страниц за запуск. Word сохраняет распознанный текст в простом редактируемом виде.' : 'Scanned PDFs and document photos. Up to 50 pages per job. Word uses a simple editable text layout.'}</p></>}
+
               {showsImageFormat && (
                 <div className="field"><label><span className="label-with-hint">{copy.format}<Hint text={formatHint} below /></span></label><select value={format} onChange={(event) => setFormat(event.target.value)}>
                   {tab !== 'remove' && <option value="jpeg">JPG</option>}<option value="png">PNG</option><option value="webp">WebP</option>
@@ -850,12 +889,12 @@ export default function App() {
               {showsQuality && (
                 <div className="field"><label><span className="label-with-hint">{copy.quality}<Hint text={qualityHint} /></span><output>{quality}%</output></label><input type="range" min="40" max="100" value={quality} aria-label={`${copy.quality}: ${quality}%`} title={qualityHint} onChange={(event) => setQuality(Number(event.target.value))} /></div>
               )}
-              {tab === 'convert' && mode === 'images' && <div className="dimension-grid"><div className="field"><label><span className="label-with-hint">{copy.maxWidth}<Hint text={copy.dimensionsHint} /></span></label><input inputMode="numeric" value={maxWidth} onChange={(event) => setMaxWidth(event.target.value.replace(/\D/g, ''))} placeholder={copy.optional} /></div><div className="field"><label>{copy.maxHeight}</label><input inputMode="numeric" value={maxHeight} onChange={(event) => setMaxHeight(event.target.value.replace(/\D/g, ''))} placeholder={copy.optional} /></div></div>}
+              {((tab === 'convert' && mode === 'images') || tab === 'studio') && <div className="dimension-grid"><div className="field"><label><span className="label-with-hint">{copy.maxWidth}<Hint text={copy.dimensionsHint} /></span></label><input inputMode="numeric" value={maxWidth} onChange={(event) => setMaxWidth(event.target.value.replace(/\D/g, ''))} placeholder={copy.optional} /></div><div className="field"><label>{copy.maxHeight}</label><input inputMode="numeric" value={maxHeight} onChange={(event) => setMaxHeight(event.target.value.replace(/\D/g, ''))} placeholder={copy.optional} /></div></div>}
               {operation === 'pdf-split' && <><div className="field"><label>{copy.splitMode}</label><select value={splitMode} onChange={(event) => setSplitMode(event.target.value)}><option value="ranges">{copy.byRanges}</option><option value="each">{copy.eachPage}</option></select></div>{splitMode === 'ranges' && <div className="field"><label>{copy.ranges}</label><input value={ranges} onChange={(event) => setRanges(event.target.value)} placeholder={copy.rangesHint} /></div>}</>}
               {operation === 'images-to-pdf' && <><div className="field"><label>{copy.pageSize}</label><select value={pageSize} onChange={(event) => setPageSize(event.target.value)}><option value="a4">{copy.a4}</option><option value="original">{copy.original}</option></select></div><div className="field"><label>{copy.orientation}</label><select value={orientation} onChange={(event) => setOrientation(event.target.value)}><option value="auto">{copy.auto}</option><option value="portrait">{copy.portrait}</option><option value="landscape">{copy.landscape}</option></select></div><div className="field"><label>{copy.margin}<output>{margin}</output></label><input type="range" min="0" max="30" value={margin} onChange={(event) => setMargin(Number(event.target.value))} /></div></>}
               {operation === 'pdf-to-images' && <div className="field"><label><span className="label-with-hint">{copy.dpi}<Hint text={dpiHint} /></span></label><div className="segmented"><button className={dpi === 150 ? 'active' : ''} onClick={() => setDpi(150)}>150 DPI</button><button className={dpi === 300 ? 'active' : ''} onClick={() => setDpi(300)}>300 DPI</button></div></div>}
               {operation === 'excel-to-word' && <><div className="field"><label><span className="label-with-hint">{copy.csvDelimiter}<Hint text={copy.csvDelimiterHint} /></span></label><select value={csvDelimiter} aria-label={copy.csvDelimiter} onChange={(event) => setCsvDelimiter(event.target.value as CsvDelimiter)}><option value="auto">{copy.detectAutomatically}</option><option value="comma">{copy.comma}</option><option value="semicolon">{copy.semicolon}</option><option value="tab">{copy.tabDelimiter}</option><option value="pipe">{copy.pipe}</option></select></div><div className="field"><label><span className="label-with-hint">{copy.csvEncoding}<Hint text={copy.csvEncodingHint} /></span></label><select value={csvEncoding} aria-label={copy.csvEncoding} onChange={(event) => setCsvEncoding(event.target.value as CsvEncoding)}><option value="auto">{copy.detectAutomatically}</option><option value="utf-8">UTF-8</option><option value="windows-1251">Windows-1251</option></select></div></>}
-              {mode === 'documents' && <div className="notice"><span>i</span><p>{documentActionHelp}<br /><small>{documentActionNotice}</small></p></div>}
+              {tab === 'convert' && mode === 'documents' && operation !== 'ocr' && <div className="notice"><span>i</span><p>{documentActionHelp}<br /><small>{documentActionNotice}</small></p></div>}
               <button className="primary-button" onClick={() => void submit()} disabled={busy || files.length === 0} aria-busy={busy}><SparkIcon />{busy ? copy.processing : copy.process}</button>
             </div>
           </div>
@@ -864,29 +903,15 @@ export default function App() {
             {localizedError ? <><span className="status-icon">!</span><div><strong>{copy.failed}</strong><p>{localizedError}</p></div><div className="job-actions">{visibleTrackedJob && isRunning(visibleJob) ? <button className="cancel-button" onClick={() => void cancel()} disabled={cancelling}>{cancelling ? copy.cancelling : copy.cancel}</button> : null}</div></> : <><span className="status-icon">{visibleJob?.status === 'succeeded' ? '✓' : '···'}</span><div className="job-copy"><strong>{visibleJob?.status === 'succeeded' ? copy.ready : cancelling ? copy.cancelling : isSubmittingHere ? copy.uploading : visibleJob?.status === 'running' ? copy.running : copy.queued}</strong><div className="progress" role="progressbar" aria-valuemin={0} aria-valuemax={100} aria-valuenow={progressPercent}><span style={{ width: `${progressPercent}%` }} /></div>{progressMeta && <small className="progress-meta">{progressMeta}</small>}{visibleJob?.resultName && <small>{visibleJob.resultName}</small>}{localizedWarnings.length > 0 && <div className="job-warnings" role="status" aria-label={copy.warningsTitle}><small className="job-warnings-title">{copy.warningsTitle}</small><ul>{localizedWarnings.map((warning, index) => <li key={`${warning}-${index}`}><span aria-hidden="true">!</span>{warning}</li>)}</ul></div>}</div><div className="job-actions">{visibleJob?.status === 'succeeded' ? <button className="download-button is-ready" onClick={() => void download()}>{copy.download} ↓</button> : visibleTrackedJob ? <button className="cancel-button" onClick={() => void cancel()} disabled={cancelling}>{cancelling ? copy.cancelling : copy.cancel}</button> : null}</div></>}
           </div>}
 
-          {tab === 'upscale' && visibleTrackedJob?.resultUrl && <div className="result-preview">
-            <div className="comparison-head"><strong>{copy.resultPreview}</strong><span>{copy.zoomHint}</span></div>
-            <ZoomPane label={copy.resultPreview} src={visibleTrackedJob.resultUrl} checkerboard={false} copy={copy} />
-          </div>}
+          {originalUrl && visibleTrackedJob?.resultUrl && <ImageComparison before={originalUrl} after={visibleTrackedJob.resultUrl} language={language} />}
+          {!originalUrl && visibleTrackedJob?.resultUrl && <div className="result-preview"><ZoomPane label={copy.resultPreview} src={visibleTrackedJob.resultUrl} checkerboard copy={copy} /></div>}
 
-          {tab !== 'upscale' && originalUrl && visibleTrackedJob?.resultUrl && <div className="comparison">
-            <div className="comparison-head"><strong>{copy.compare}</strong><span>{copy.zoomHint}</span></div>
-            <div className="compare-grid">
-              <ZoomPane label={copy.before} src={originalUrl} checkerboard={false} copy={copy} />
-              <ZoomPane label={copy.after} src={visibleTrackedJob.resultUrl} checkerboard={tab === 'remove'} copy={copy} />
-            </div>
-          </div>}
-
-          {tab !== 'upscale' && !originalUrl && visibleTrackedJob?.resultUrl && <div className="result-preview">
-            <div className="comparison-head"><strong>{copy.resultPreview}</strong><span>{copy.zoomHint}</span></div>
-            <ZoomPane label={copy.resultPreview} src={visibleTrackedJob.resultUrl} checkerboard={tab === 'remove'} copy={copy} />
-          </div>}
         </section>
 
         <div className="privacy-note"><span>⌁</span><p>{copy.privacy}</p></div>
       </main>
 
-      <footer><span>© {new Date().getFullYear()} GPTHub Tools</span><div><a href="mailto:support@gpthub.ru?subject=GPTHub%20Tools">{copy.support}</a><a href="https://github.com/nitrodzen/gpthub-tools" target="_blank" rel="noreferrer">{copy.github} ↗</a></div></footer>
+      <footer><span>© {new Date().getFullYear()} GPTHub Tools</span><div><a href="https://github.com/nitrodzen/gpthub-tools/blob/main/docs/IMAGE_LAB.md" target="_blank" rel="noreferrer">{language === 'ru' ? 'Модели и авторы' : 'Models and credits'}</a><a href="mailto:support@gpthub.ru?subject=GPTHub%20Tools">{copy.support}</a><a href="https://github.com/nitrodzen/gpthub-tools" target="_blank" rel="noreferrer">{copy.github} ↗</a></div></footer>
     </div>
   )
 }

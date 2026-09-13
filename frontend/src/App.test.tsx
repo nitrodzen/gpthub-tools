@@ -24,8 +24,54 @@ describe('App', () => {
     expect(screen.getByText('Увеличение изображений')).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Удалить фон' })).toBeInTheDocument()
     expect(screen.getByRole('button', { name: 'Конвертер' })).toBeInTheDocument()
-    expect(screen.getByRole('slider', { name: 'Качество: 100%' })).toHaveValue('100')
+    expect(screen.getByRole('slider', { name: 'Качество файла: 100%' })).toHaveValue('100')
     expect(screen.getByLabelText(/90% уменьшает файл примерно на 15–30%/)).toBeInTheDocument()
+  })
+
+  it('offers all models and constrains the native photo model to 2x', () => {
+    render(<App />)
+    const model = screen.getByRole('combobox', { name: 'Режим обработки' })
+    expect(model.querySelectorAll('option')).toHaveLength(5)
+    fireEvent.click(screen.getByRole('button', { name: '4×' }))
+    fireEvent.change(model, { target: { value: 'photo' } })
+    expect(screen.getByRole('button', { name: '2×' })).toHaveClass('active')
+    expect(screen.getByRole('button', { name: '4×' })).toBeDisabled()
+  })
+
+  it('submits enhancement without enlargement as an additive operation', async () => {
+    apiMocks.createJob.mockReturnValue(new Promise(() => {}))
+    const { container } = render(<App />)
+    fireEvent.click(screen.getByRole('button', { name: 'Без увеличения' }))
+    const file = new File(['image'], 'photo.png', { type: 'image/png' })
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledWith('image-enhance', [file], expect.objectContaining({ scale: 1 })))
+  })
+
+  it('accepts scanned PDFs for OCR and submits the selected output format', async () => {
+    window.history.replaceState({}, '', '/convert/documents/ocr')
+    apiMocks.createJob.mockReturnValue(new Promise(() => {}))
+    const { container } = render(<App />)
+    const input = container.querySelector('input[type="file"]')!
+    expect(input.getAttribute('accept')).toContain('.pdf')
+    expect(input.getAttribute('accept')).toContain('.png')
+    const file = new File(['scan'], 'scan.pdf', { type: 'application/pdf' })
+    fireEvent.change(screen.getByRole('combobox', { name: 'Формат результата' }), { target: { value: 'pdf' } })
+    fireEvent.change(input, { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledWith('ocr', [file], { format: 'pdf', language: 'rus+eng' }))
+  })
+
+  it('submits the image preparation chain without changing the other tool contracts', async () => {
+    window.history.replaceState({}, '', '/prepare-image')
+    apiMocks.createJob.mockReturnValue(new Promise(() => {}))
+    const { container } = render(<App />)
+    const file = new File(['image'], 'product.png', { type: 'image/png' })
+    fireEvent.click(screen.getByRole('checkbox', { name: 'Убрать шум и следы сжатия' }))
+    fireEvent.change(screen.getByRole('combobox', { name: 'Фон результата' }), { target: { value: 'color' } })
+    fireEvent.change(container.querySelector('input[type="file"]')!, { target: { files: [file] } })
+    fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
+    await waitFor(() => expect(apiMocks.createJob).toHaveBeenCalledWith('image-pipeline', [file], expect.objectContaining({ removeBackground: true, enhance: true, background: '#ffffff', scale: 2 })))
   })
 
   it('normalizes the legacy documents route and exposes action-specific routes and formats', () => {
@@ -246,7 +292,7 @@ describe('App', () => {
     expect(screen.getByRole('button', { name: 'Отменить' })).toBeInTheDocument()
   })
 
-  it('shows one result preview for upscaling and highlights a completed job', async () => {
+  it('compares original and upscaled image and highlights a completed job', async () => {
     apiMocks.createJob.mockResolvedValue({
       jobId: 'job-ready', token: 'capability-token-123456789', expiresAt: '2026-07-11T03:00:00Z',
     })
@@ -260,11 +306,11 @@ describe('App', () => {
     fireEvent.change(input, { target: { files: [new File(['image'], 'photo.png', { type: 'image/png' })] } })
     fireEvent.click(screen.getByRole('button', { name: 'Начать обработку' }))
 
-    expect(await screen.findByAltText('Готовый результат')).toBeInTheDocument()
-    expect(container.querySelectorAll('.result-preview .compare-pane')).toHaveLength(1)
-    expect(screen.queryByText('Сравнение до и после')).not.toBeInTheDocument()
-    expect(screen.queryByText('До')).not.toBeInTheDocument()
-    expect(screen.queryByText('После')).not.toBeInTheDocument()
+    expect(await screen.findByAltText('После')).toBeInTheDocument()
+    expect(screen.getByAltText('До')).toBeInTheDocument()
+    expect(container.querySelectorAll('.image-comparison')).toHaveLength(1)
+    fireEvent.change(screen.getByRole('slider', { name: 'Граница до и после' }), { target: { value: '75' } })
+    expect(container.querySelector('.comparison-overlay')).toHaveStyle({ clipPath: 'inset(0 25% 0 0)' })
     expect(screen.getByRole('button', { name: /Скачать результат/ })).toHaveClass('is-ready')
     expect(document.title).toBe('✓ Результат готов — GPTHub Tools')
     expect(document.querySelector('link[rel~="icon"]')?.getAttribute('href')).toMatch(/^data:image\/svg\+xml,/)

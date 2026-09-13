@@ -23,24 +23,22 @@ For a public host, put a TLS reverse proxy in front of the loopback-only gateway
 
 The optional `compose.ai.yml` connects two compatible services to the same private Compose network. They do not publish host ports and workers wait for their health checks before starting.
 
-The Real-ESRGAN service requires an NVIDIA GPU, a compatible driver and NVIDIA Container Toolkit. It can run on CPU if `gpus: all` is removed from `compose.ai.yml`, but it will be substantially slower.
+The upscaler requires an NVIDIA GPU, a compatible driver and NVIDIA Container Toolkit. CPU execution is opt-in: remove `gpus: all` and set `REQUIRE_CUDA=false`; it will be substantially slower. FP32 is the default and is appropriate for older Pascal GPUs. The service loads every upscale model once at startup.
 
 Create the model directories. On Linux, make them writable by the unprivileged container account where noted:
 
 ```bash
-mkdir -p data/ai-models/realesrgan data/ai-models/rembg
+mkdir -p data/ai-models/realesrgan data/ai-models/rembg data/ai-cache
 sudo chown -R 10001:10001 data/ai-models
+sudo chown 10001:10001 data/ai-cache
 ```
 
-Download the two Real-ESRGAN weight files from the upstream project. They are not committed to this repository:
+Provision model files using Python 3.11 or newer. The downloader verifies pinned SHA-256 values and skips already verified files. Model binaries are not committed to this repository:
 
 ```bash
-curl --fail --location \
-  -o data/ai-models/realesrgan/RealESRGAN_x2plus.pth \
-  https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth
-curl --fail --location \
-  -o data/ai-models/realesrgan/RealESRGAN_x4plus.pth \
-  https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth
+python3 ai-backends/download_models.py data/ai-models/realesrgan --group upscale
+python3 ai-backends/download_models.py data/ai-models/rembg --group cpu
+sudo chown -R 10001:10001 data/ai-models
 ```
 
 Start the complete self-hosted deployment:
@@ -50,7 +48,18 @@ docker compose -f compose.yml -f compose.ai.yml --profile ai up -d --build
 curl -fsS http://127.0.0.1:9080/api/health
 ```
 
-On its first start, the background-removal service downloads the approximately 224 MB `birefnet-general-lite` model into `data/ai-models/rembg`. Keep that directory persistent and out of Git; the health check becomes ready only after this first download completes.
+Keep model directories persistent and out of Git. The upscale set is approximately 0.5 GB; CPU models take approximately 2.3 GB. Missing BiRefNet models can also be downloaded by rembg when first selected. Provisioning ahead of time avoids that delay. Full BiRefNet processing can peak near 10 GiB RAM, so the full CPU service has a 12 GiB memory limit with swap disabled. Only the active background session remains in RAM.
+
+### CPU work on the application host, GPU on a separate host
+
+Use `deploy/compose.cpu.yml` independently of the main release. It connects to the existing Tools Docker network and exposes only a loopback port for an optional host proxy. Configure `BACKGROUND_URL=http://gpthub-image-cpu:5010/process` and `ENHANCE_URL=http://gpthub-image-cpu:5010/enhance` in the application's private `.env`, then recreate its API/AI workers. OCR already runs in the isolated local workers and needs no external model service.
+
+```bash
+CPU_IMAGE_VERSION=<version> CPU_MODELS_DIR=/absolute/path/to/models \
+  docker compose -f deploy/compose.cpu.yml up -d --build
+```
+
+For a smaller application host, set `CPU_MEMORY_LIMIT=7g` and `REMOTE_BACKGROUND_URL=http://private-large-memory-host:5010/process`. Fast background removal and 1× enhancement then run locally; quality/portrait requests are forwarded to the larger CPU host. The CPU service unloads the previous operation's model before switching between restoration and background removal. Configure that larger host without `REMOTE_BACKGROUND_URL` to avoid forwarding loops. Do not expose a new public model endpoint just for this arrangement. The existing background endpoint's JSON result contract is preserved.
 
 ## 3. Run AI services on another private host
 
@@ -59,6 +68,7 @@ Do not expose the AI services to the public internet. Connect the hosts with a p
 ```dotenv
 UPSCALE_URL=http://ai-upscaler.internal:5011/upscale
 BACKGROUND_URL=http://ai-background-remover.internal:5010/process
+ENHANCE_URL=http://ai-background-remover.internal:5010/enhance
 ```
 
 If a reverse proxy is required between the hosts, preserve the endpoint contracts:
@@ -125,3 +135,5 @@ Upscale output is limited to 200 million pixels by default through `MAX_UPSCALE_
 - The model weights and their upstream licenses are separate from this AGPL application. Review the upstream terms before redistributing weights.
 
 Upstream model projects: [Real-ESRGAN](https://github.com/xinntao/Real-ESRGAN) and [rembg](https://github.com/danielgatis/rembg).
+
+All model credits, new operation options, preview behavior and OCR limitations are documented in [Image Lab](IMAGE_LAB.md).

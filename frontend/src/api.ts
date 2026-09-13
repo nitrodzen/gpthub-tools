@@ -1,5 +1,9 @@
 export type Operation =
   | 'upscale'
+  | 'upscale-preview'
+  | 'image-enhance'
+  | 'image-pipeline'
+  | 'ocr'
   | 'remove-background'
   | 'image-convert'
   | 'document-convert'

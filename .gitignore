@@ -18,6 +18,7 @@ frontend/vite.config.d.ts
 # Downloaded AI model weights and caches must never be published.
 *.onnx
 *.pth
+*.safetensors
 ai-backends/**/models/
 .DS_Store
 Thumbs.db

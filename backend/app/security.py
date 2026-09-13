@@ -88,11 +88,16 @@ OFFICE_MIME_TYPES = {
 def allowed_extensions(operation: Operation) -> set[str]:
     if operation in {
         Operation.UPSCALE,
+        Operation.UPSCALE_PREVIEW,
+        Operation.IMAGE_ENHANCE,
+        Operation.IMAGE_PIPELINE,
         Operation.REMOVE_BACKGROUND,
         Operation.IMAGE_CONVERT,
         Operation.IMAGES_TO_PDF,
     }:
         return IMAGE_EXTENSIONS
+    if operation is Operation.OCR:
+        return IMAGE_EXTENSIONS | PDF_ONLY
     if operation is Operation.DOCUMENT_CONVERT:
         return DOCUMENT_EXTENSIONS
     if operation is Operation.WORD_TO_EXCEL:

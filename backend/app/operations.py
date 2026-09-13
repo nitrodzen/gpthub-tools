@@ -36,6 +36,7 @@ MIME_BY_SUFFIX = {
     ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
     ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
     ".zip": "application/zip",
+    ".txt": "text/plain; charset=utf-8",
 }
 
 
@@ -268,7 +269,7 @@ def convert_images(files: list[dict[str, Any]], output_dir: Path, options: dict[
 
 async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[str, Any]) -> Path:
     scale = int(options.get("scale", 2))
-    if scale not in {2, 4}:
+    if scale not in {1, 2, 4}:
         raise JobFailure(ErrorCode.INVALID_FILE, "Upscale factor must be 2 or 4")
     fmt = str(options.get("format", "jpeg")).lower()
     if fmt not in {"jpg", "jpeg", "png", "webp"}:
@@ -283,7 +284,9 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
                 expected_size = (oriented.width * scale, oriented.height * scale)
             with Path(item["path"]).open("rb") as source:
                 response = await client.post(
-                    settings.upscale_url,
+                    (settings.enhance_url or settings.upscale_url)
+                    if scale == 1
+                    else settings.upscale_url,
                     files={
                         "file": (
                             item["original"],
@@ -291,7 +294,12 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
                             item.get("content_type") or "application/octet-stream",
                         )
                     },
-                    data={"scale": str(scale), "format": upstream_format},
+                    data={
+                        "scale": str(scale),
+                        "format": upstream_format,
+                        "model": str(options.get("model", "standard")),
+                        "strength": str(options.get("strength", 100)),
+                    },
                 )
             raw = output_dir / f"upscaled_{clean_stem(item['original'])}_{index}.png"
             raw.write_bytes(validated_upscale_png(response, expected_size))
@@ -330,6 +338,7 @@ async def remove_background(
                             item.get("content_type") or "application/octet-stream",
                         )
                     },
+                    data={"preset": str(options.get("backgroundPreset", "fast"))},
                 )
             if response.status_code >= 400:
                 raise JobFailure(
@@ -534,8 +543,18 @@ def pdf_to_images(files: list[dict[str, Any]], output_dir: Path, options: dict[s
 async def execute(
     operation: Operation, files: list[dict[str, Any]], output_dir: Path, options: dict[str, Any]
 ) -> OperationResult:
-    if operation is Operation.UPSCALE:
+    if operation in {Operation.UPSCALE, Operation.UPSCALE_PREVIEW}:
         result = await upscale(files, output_dir, options)
+    elif operation is Operation.IMAGE_ENHANCE:
+        result = await upscale(files, output_dir, {**options, "scale": 1, "model": "clean"})
+    elif operation is Operation.IMAGE_PIPELINE:
+        from .image_pipeline import image_pipeline
+
+        result = await image_pipeline(files, output_dir, options)
+    elif operation is Operation.OCR:
+        from .ocr import run_ocr_isolated
+
+        return await run_ocr_isolated(files, output_dir, options)
     elif operation is Operation.REMOVE_BACKGROUND:
         result = await remove_background(files, output_dir, options)
     elif operation is Operation.IMAGE_CONVERT:

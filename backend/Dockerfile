@@ -9,6 +9,7 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
       curl tini libreoffice-writer libreoffice-calc libreoffice-core \
       fonts-crosextra-caladea fonts-crosextra-carlito fonts-liberation2 \
       fonts-noto-core fonts-noto-color-emoji \
+      tesseract-ocr tesseract-ocr-rus tesseract-ocr-eng \
     && rm -rf /var/lib/apt/lists/* \
     && useradd --uid 10001 --create-home --home-dir /home/app app
 

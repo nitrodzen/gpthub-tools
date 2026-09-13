@@ -23,6 +23,7 @@ class Settings:
     app_secret: str = os.getenv("APP_SECRET", "development-only-change-me")
     upscale_url: str = os.getenv("UPSCALE_URL", "https://api.gpthub.ru/upscale")
     background_url: str = os.getenv("BACKGROUND_URL", "https://api.gpthub.ru/bgr1/process")
+    enhance_url: str = os.getenv("ENHANCE_URL", "")
     clamav_host: str = os.getenv("CLAMAV_HOST", "clamav")
     clamav_port: int = int(os.getenv("CLAMAV_PORT", "3310"))
     clamav_required: bool = _bool("CLAMAV_REQUIRED", True)
@@ -35,9 +36,7 @@ class Settings:
     max_files: int = int(os.getenv("MAX_FILES", "20"))
     max_pdf_pages: int = int(os.getenv("MAX_PDF_PAGES", "250"))
     max_image_pixels: int = int(os.getenv("MAX_IMAGE_PIXELS", "100000000"))
-    max_upscale_output_pixels: int = int(
-        os.getenv("MAX_UPSCALE_OUTPUT_PIXELS", "200000000")
-    )
+    max_upscale_output_pixels: int = int(os.getenv("MAX_UPSCALE_OUTPUT_PIXELS", "200000000"))
     max_active_jobs_per_ip: int = int(os.getenv("MAX_ACTIVE_JOBS_PER_IP", "3"))
     job_timeout_seconds: int = int(os.getenv("JOB_TIMEOUT_SECONDS", "1800"))
     expected_workers: int = int(os.getenv("EXPECTED_WORKERS", "4"))

@@ -3,11 +3,13 @@ services:
     environment:
       UPSCALE_URL: http://ai-upscaler:5011/upscale
       BACKGROUND_URL: http://ai-background-remover:5010/process
+      ENHANCE_URL: http://ai-background-remover:5010/enhance
 
   worker-ai-1:
     environment:
       UPSCALE_URL: http://ai-upscaler:5011/upscale
       BACKGROUND_URL: http://ai-background-remover:5010/process
+      ENHANCE_URL: http://ai-background-remover:5010/enhance
     depends_on:
       ai-upscaler:
         condition: service_healthy
@@ -18,6 +20,7 @@ services:
     environment:
       UPSCALE_URL: http://ai-upscaler:5011/upscale
       BACKGROUND_URL: http://ai-background-remover:5010/process
+      ENHANCE_URL: http://ai-background-remover:5010/enhance
     depends_on:
       ai-upscaler:
         condition: service_healthy
@@ -33,7 +36,8 @@ services:
       MAX_UPLOAD_BYTES: 52428800
       MAX_INPUT_PIXELS: 100000000
       MAX_OUTPUT_PIXELS: ${MAX_UPSCALE_OUTPUT_PIXELS:-200000000}
-      TILE_SIZE: 512
+      REQUIRE_CUDA: 'true'
+      MODEL_PRECISION: fp32
     volumes:
       - ./data/ai-models/realesrgan:/models:ro
     networks:
@@ -60,11 +64,8 @@ services:
     profiles: ["ai"]
     environment:
       U2NET_HOME: /models
-      REMBG_MODEL: birefnet-general-lite
       NUMBA_CACHE_DIR: /tmp/numba
-      MAX_UPLOAD_BYTES: 52428800
-      MAX_INPUT_PIXELS: 100000000
-      PROCESS_MAX_SIDE: 512
+      OMP_NUM_THREADS: '3'
     volumes:
       - ./data/ai-models/rembg:/models
     networks:
@@ -75,8 +76,10 @@ services:
       - /tmp:size=256m,mode=1777
     security_opt:
       - no-new-privileges:true
-    mem_limit: 3g
-    cpus: 2.0
+    mem_limit: 12g
+    memswap_limit: 12g
+    cpus: 3.0
+    oom_score_adj: 500
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5010/health', timeout=3)"]
       interval: 20s

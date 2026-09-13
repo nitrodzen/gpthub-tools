@@ -22,6 +22,7 @@ from fastapi.responses import FileResponse, JSONResponse, Response
 from redis.asyncio import Redis
 
 from .config import settings
+from .image_options import validate_image_options
 from .metrics import metrics
 from .models import AI_OPERATIONS, ErrorCode, JobCreated, JobFailure, JobStatus, JobView, Operation
 from .security import (
@@ -114,6 +115,9 @@ async def consume_rate(redis: Redis, ip_hash: str, operation: Operation, units: 
     window = 3600
     limit = 20 if operation in AI_OPERATIONS else 60
     key = f"rate:{'ai' if operation in AI_OPERATIONS else 'local'}:{ip_hash}"
+    if operation is Operation.UPSCALE_PREVIEW:
+        limit = 80
+        key = f"rate:preview:{ip_hash}"
     now = time.time()
     async with redis.pipeline(transaction=True) as pipeline:
         await pipeline.zremrangebyscore(key, 0, now - window)
@@ -291,6 +295,7 @@ async def create_job(
         parsed_options = json.loads(options)
         if not isinstance(parsed_options, dict):
             raise ValueError
+        validate_image_options(operation, parsed_options)
     except (json.JSONDecodeError, ValueError) as exc:
         await metrics.record_rejected(
             operation=operation,
@@ -299,6 +304,14 @@ async def create_job(
             error_code=ErrorCode.INVALID_FILE.value,
         )
         raise JobFailure(ErrorCode.INVALID_FILE, "Job options must be a JSON object") from exc
+    except JobFailure as exc:
+        await metrics.record_rejected(
+            operation=operation,
+            file_count=len(files),
+            input_bytes=0,
+            error_code=exc.code.value,
+        )
+        raise
 
     ip_hash = ip_digest(client_ip(request))
     job_id, token = new_capability()
@@ -342,12 +355,26 @@ async def create_job(
                 extension,
                 upload.content_type,
             )
-            if operation is Operation.UPSCALE:
+            if (
+                operation in {Operation.UPSCALE, Operation.IMAGE_PIPELINE}
+                and int(
+                    parsed_options.get("scale", 1 if operation is Operation.IMAGE_PIPELINE else 2)
+                )
+                != 1
+            ):
                 await asyncio.to_thread(
                     validate_upscale_dimensions,
                     stored_path,
                     parsed_options.get("scale", 2),
                 )
+            if operation is Operation.UPSCALE_PREVIEW:
+                from PIL import Image
+
+                with Image.open(stored_path) as preview:
+                    if len(files) != 1 or max(preview.size) > 192:
+                        raise JobFailure(
+                            ErrorCode.IMAGE_TOO_LARGE, "Preview accepts one crop up to 192 pixels"
+                        )
             await scan_file(stored_path)
             stored.append(
                 {

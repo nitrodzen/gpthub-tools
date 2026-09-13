@@ -18,6 +18,7 @@ x-backend: &backend
     APP_VERSION: ${APP_VERSION:-dev}
     UPSCALE_URL: ${UPSCALE_URL:-https://api.gpthub.ru/upscale}
     BACKGROUND_URL: ${BACKGROUND_URL:-https://api.gpthub.ru/bgr1/process}
+    ENHANCE_URL: ${ENHANCE_URL:-}
     CLAMAV_HOST: clamav
     CLAMAV_REQUIRED: ${CLAMAV_REQUIRED:-true}
     MAX_ACTIVE_JOBS_PER_IP: ${MAX_ACTIVE_JOBS_PER_IP:-3}

@@ -12,9 +12,9 @@ WORKDIR /app
 COPY requirements.txt ./
 RUN python -m pip install --upgrade pip && pip install -r requirements.txt
 
-COPY app.py ./
+COPY app.py enhance.py ./
 RUN mkdir -p /models && chown -R app:app /app /models
 
 USER app
 EXPOSE 5010
-CMD ["gunicorn", "--workers", "1", "--threads", "1", "--bind", "0.0.0.0:5010", "--access-logfile", "-", "--error-logfile", "-", "app:app"]
+CMD ["gunicorn", "--workers", "1", "--threads", "2", "--timeout", "600", "--bind", "0.0.0.0:5010", "--access-logfile", "-", "--error-logfile", "-", "app:app"]

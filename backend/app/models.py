@@ -8,6 +8,10 @@ from pydantic import BaseModel, Field
 
 class Operation(StrEnum):
     UPSCALE = "upscale"
+    UPSCALE_PREVIEW = "upscale-preview"
+    IMAGE_ENHANCE = "image-enhance"
+    IMAGE_PIPELINE = "image-pipeline"
+    OCR = "ocr"
     REMOVE_BACKGROUND = "remove-background"
     IMAGE_CONVERT = "image-convert"
     DOCUMENT_CONVERT = "document-convert"
@@ -19,7 +23,13 @@ class Operation(StrEnum):
     EXCEL_TO_WORD = "excel-to-word"
 
 
-AI_OPERATIONS = {Operation.UPSCALE, Operation.REMOVE_BACKGROUND}
+AI_OPERATIONS = {
+    Operation.UPSCALE,
+    Operation.UPSCALE_PREVIEW,
+    Operation.IMAGE_ENHANCE,
+    Operation.IMAGE_PIPELINE,
+    Operation.REMOVE_BACKGROUND,
+}
 
 
 class JobStatus(StrEnum):

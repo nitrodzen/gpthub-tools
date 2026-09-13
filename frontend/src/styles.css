@@ -253,3 +253,29 @@ footer a:hover { color: var(--accent); }
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; }
   .download-button.is-ready, .tabs button .tab-ready-badge { animation: none; }
 }
+.field-help { display:block; font-size:12px; line-height:1.5; color:var(--muted); margin:6px 0 0; }
+.check-field { display:flex; align-items:center; gap:9px; font-size:13px; margin:12px 0; }
+.check-field input { width:16px; height:16px; accent-color:var(--accent); }
+.model-explorer { margin-top:20px; border-top:1px solid var(--line); padding-top:18px; }
+.model-explorer > strong { font-size:14px; }
+.crop-selector { position:relative; width:fit-content; max-width:100%; margin:12px auto; }
+.crop-selector img { display:block; max-width:100%; max-height:220px; cursor:crosshair; border-radius:8px; }
+.crop-selector span { position:absolute; transform:translate(-50%,-50%); pointer-events:none; color:white; background:#0007; border:1px solid white; width:28px; height:28px; display:grid; place-items:center; border-radius:50%; }
+.preview-button { padding:10px 14px; border:1px solid var(--line); border-radius:10px; background:var(--surface); color:inherit; cursor:pointer; width:100%; }
+.preview-button:disabled { opacity:.65; cursor:default; }
+.image-comparison { padding:20px 0 0; margin:0 24px 24px; }
+.model-explorer .image-comparison { margin:12px 0 0; padding:0; }
+.comparison-stage { position:relative; height:clamp(220px,45vw,480px); overflow:hidden; border:1px solid var(--line); border-radius:12px; cursor:grab; }
+.model-explorer .comparison-stage { height:260px; }
+.comparison-stage img { width:100%; height:100%; object-fit:contain; display:block; user-select:none; }
+.comparison-overlay { position:absolute; inset:0; }
+.comparison-divider { position:absolute; top:0; bottom:0; width:2px; background:white; box-shadow:0 0 3px #000; pointer-events:none; }
+.comparison-caption { position:absolute; bottom:8px; left:8px; padding:3px 8px; border-radius:5px; background:#0009; color:white; font-size:11px; }
+.comparison-caption.right { left:auto; right:8px; }
+.image-comparison > input { width:100%; margin:12px 0 0; accent-color:var(--accent); }
+.image-comparison .comparison-head label { display:flex; align-items:center; gap:8px; font-size:12px; }
+.image-comparison select { width:auto; padding:5px; }
+.settings-column .segmented button { min-width:0; font-size:12px; }
+@media (max-width:640px) { .tabs { flex-wrap:wrap; } .tabs > button { flex:1 0 40%; } .image-comparison { margin:0 16px 16px; } }
+
+.settings-column .scale-options { grid-template-columns:1.8fr 1fr 1fr; }

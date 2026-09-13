@@ -1,0 +1,57 @@
+[
+  {
+    "file": "photo.safetensors",
+    "source": "https://github.com/Phhofm/models/releases/download/2xPublic_realplksr_dysample_layernorm_real/2xPublic_realplksr_dysample_layernorm_real.safetensors",
+    "bytes": 29511708,
+    "sha256": "5eb81e8c3e21d57b0ea2aa7931910c97c263c1f23ef9b35fabbd46e98471cd44"
+  },
+  {
+    "file": "web-photo.safetensors",
+    "source": "https://github.com/Phhofm/models/releases/download/4xRealWebPhoto_v3_atd/4xRealWebPhoto_v3_atd.safetensors",
+    "bytes": 81689540,
+    "sha256": "1812b76bb92e0a1af04c3cf02b7bd192acbe35abb071442026bc3827033a5412"
+  },
+  {
+    "file": "detail.pth",
+    "source": "https://huggingface.co/Acly/hat/resolve/main/Real_HAT_GAN_sharper.pth",
+    "bytes": 170277017,
+    "sha256": "5800b67136006eb8cab3b4ed7c8d73b6a195bb18e6cc709b674f9aa069c00271"
+  },
+  {
+    "file": "illustration.pth",
+    "source": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.2.4/RealESRGAN_x4plus_anime_6B.pth",
+    "bytes": 17938799,
+    "sha256": "f872d837d3c90ed2e05227bed711af5671a6fd1c9f7d7e91c911a61f155e99da"
+  },
+  {
+    "file": "clean.onnx",
+    "source": "https://github.com/Phhofm/models/releases/download/1xgaterv3_r_restore/1xgaterv3_r_restore_fp32_op17.onnx",
+    "bytes": 86388840,
+    "sha256": "6653528b62fe763403e18fa33a21c28755b27006e15d6be4b2c2c56c7ca4d27b"
+  },
+  {
+    "file": "RealESRGAN_x2plus.pth",
+    "sha256": "49fafd45f8fd7aa8d31ab2a22d14d91b536c34494a5cfe31eb5d89c2fa266abb",
+    "source": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.2.1/RealESRGAN_x2plus.pth"
+  },
+  {
+    "file": "RealESRGAN_x4plus.pth",
+    "sha256": "4fa0d38905f75ac06eb49a7951b426670021be3018265fd191d2125df9d682f1",
+    "source": "https://github.com/xinntao/Real-ESRGAN/releases/download/v0.1.0/RealESRGAN_x4plus.pth"
+  },
+  {
+    "file": "birefnet-general-lite.onnx",
+    "sha256": "5600024376f572a557870a5eb0afb1e5961636bef4e1e22132025467d0f03333",
+    "source": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-bb_swin_v1_tiny-epoch_232.onnx"
+  },
+  {
+    "file": "birefnet-general.onnx",
+    "sha256": "58f621f00f5d756097615970a88a791584600dcf7c45b18a0a6267535a1ebd3c",
+    "source": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-general-epoch_244.onnx"
+  },
+  {
+    "file": "birefnet-portrait.onnx",
+    "sha256": "1ba1c8ff5a7bbfadc8d8d13fb11d7be793f91f23d9d466549e37a854f6668f99",
+    "source": "https://github.com/danielgatis/rembg/releases/download/v0.0.0/BiRefNet-portrait-epoch_150.onnx"
+  }
+]
