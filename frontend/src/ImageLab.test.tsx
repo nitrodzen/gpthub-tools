@@ -1,6 +1,6 @@
 import { fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { afterEach, expect, it, vi } from 'vitest'
-import { ModelExplorer } from './ImageLab'
+import { ImageComparison, ModelExplorer } from './ImageLab'
 
 const api = vi.hoisted(() => ({ createJob: vi.fn(), getJob: vi.fn(), fetchResult: vi.fn(), cancelJob: vi.fn() }))
 vi.mock('./api', () => api)
@@ -30,5 +30,30 @@ it('uploads only a crop and reuses its completed preview when switching back', a
   rerender(<ModelExplorer {...props} />)
   expect(screen.getByRole('button', { name: /Готово за/ })).toBeDisabled()
   expect(api.createJob).toHaveBeenCalledOnce()
+  rerender(<ModelExplorer {...props} faceRestoration={100} />)
+  fireEvent.click(screen.getByRole('button', { name: 'Проба выбранного режима' }))
+  await waitFor(() => expect(api.createJob).toHaveBeenCalledTimes(2))
+  expect(drawImage.mock.calls[1].slice(1)).toEqual([0, 0, 1000, 800, 0, 0, 256, 205])
+  expect(api.createJob.mock.calls[1][2]).toMatchObject({ faceRestoration: 100 })
   await waitFor(() => expect(api.cancelJob).toHaveBeenCalled())
+})
+
+it('isolates original and result, including transparent result areas and full-image views', () => {
+  const { rerender } = render(<ImageComparison before="blob:original" after="blob:transparent-result" language="ru" />)
+  const original = screen.getByRole('img', { name: 'До' })
+  const result = screen.getByRole('img', { name: 'После' })
+  expect(original).toHaveAttribute('src', 'blob:original')
+  expect(result).toHaveAttribute('src', 'blob:transparent-result')
+  expect(original.parentElement).toHaveStyle({ clipPath: 'inset(0 50% 0 0)' })
+  expect(result.parentElement).toHaveStyle({ clipPath: 'inset(0 0 0 50%)' })
+  fireEvent.click(screen.getByRole('button', { name: 'Только после' }))
+  expect(original.parentElement).toHaveStyle({ clipPath: 'inset(0 100% 0 0)' })
+  expect(result.parentElement).toHaveStyle({ clipPath: 'inset(0 0 0 0%)' })
+  fireEvent.click(screen.getByRole('button', { name: 'Только до' }))
+  expect(result.parentElement).toHaveStyle({ clipPath: 'inset(0 0 0 100%)' })
+  fireEvent.change(screen.getByRole('combobox'), { target: { value: '2' } })
+  expect(original).toHaveStyle({ transform: 'translate(0px, 0px) scale(2)' })
+  expect(result).toHaveStyle({ transform: 'translate(0px, 0px) scale(2)' })
+  rerender(<ImageComparison before="blob:original" after="blob:new-result" language="ru" />)
+  expect(screen.getByRole('slider')).toHaveValue('50')
 })

@@ -367,13 +367,37 @@ async def create_job(
                     stored_path,
                     parsed_options.get("scale", 2),
                 )
+            if operation in {
+                Operation.UPSCALE,
+                Operation.UPSCALE_PREVIEW,
+                Operation.IMAGE_ENHANCE,
+                Operation.IMAGE_PIPELINE,
+            } and parsed_options.get("faceRestoration", 0):
+                from PIL import Image
+
+                with Image.open(stored_path) as portrait:
+                    face_scale = int(
+                        parsed_options.get(
+                            "scale",
+                            1
+                            if operation in {Operation.IMAGE_ENHANCE, Operation.IMAGE_PIPELINE}
+                            else 2,
+                        )
+                    )
+                    if portrait.width * portrait.height * face_scale * face_scale > 32000000:
+                        raise JobFailure(
+                            ErrorCode.IMAGE_TOO_LARGE,
+                            "Face restoration supports up to 32 megapixels of output",
+                        )
             if operation is Operation.UPSCALE_PREVIEW:
                 from PIL import Image
 
                 with Image.open(stored_path) as preview:
-                    if len(files) != 1 or max(preview.size) > 192:
+                    limit = 256 if parsed_options.get("faceRestoration", 0) else 192
+                    if len(files) != 1 or max(preview.size) > limit:
                         raise JobFailure(
-                            ErrorCode.IMAGE_TOO_LARGE, "Preview accepts one crop up to 192 pixels"
+                            ErrorCode.IMAGE_TOO_LARGE,
+                            f"Preview accepts one image up to {limit} pixels",
                         )
             await scan_file(stored_path)
             stored.append(

@@ -23,6 +23,7 @@ def main():
         if model['file'] != 'clean.onnx' and is_background != (args.group == 'cpu'):
             continue
         target = args.destination / model['file']
+        target.parent.mkdir(parents=True, exist_ok=True)
         if target.exists() and digest(target) == model['sha256']:
             print(f'Verified {target.name}', flush=True)
             continue

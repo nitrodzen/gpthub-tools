@@ -265,11 +265,17 @@ footer a:hover { color: var(--accent); }
 .preview-button:disabled { opacity:.65; cursor:default; }
 .image-comparison { padding:20px 0 0; margin:0 24px 24px; }
 .model-explorer .image-comparison { margin:12px 0 0; padding:0; }
-.comparison-stage { position:relative; height:clamp(220px,45vw,480px); overflow:hidden; border:1px solid var(--line); border-radius:12px; cursor:grab; }
+.comparison-stage { position:relative; height:clamp(220px,45vw,480px); overflow:hidden; border:1px solid var(--line); border-radius:12px; cursor:ew-resize; }
+.comparison-stage.is-zoomed { cursor:grab; }
 .model-explorer .comparison-stage { height:260px; }
-.comparison-stage img { width:100%; height:100%; object-fit:contain; display:block; user-select:none; }
-.comparison-overlay { position:absolute; inset:0; }
-.comparison-divider { position:absolute; top:0; bottom:0; width:2px; background:white; box-shadow:0 0 3px #000; pointer-events:none; }
+.comparison-stage img { width:100%; height:100%; object-fit:contain; display:block; user-select:none; pointer-events:none; }
+.comparison-layer { position:absolute; inset:0; overflow:hidden; background-color:#fff; background-image:conic-gradient(#e6e8ee 25%, #fff 0 50%, #e6e8ee 0 75%, #fff 0); background-size:24px 24px; }
+.comparison-divider { position:absolute; top:0; bottom:0; width:28px; transform:translateX(-50%); cursor:ew-resize; display:grid; place-items:center; }
+.comparison-divider::before { content:''; position:absolute; top:0; bottom:0; width:2px; background:white; box-shadow:0 0 3px #000; }
+.comparison-divider > span { z-index:1; display:grid; place-items:center; width:28px; height:36px; border-radius:18px; background:white; color:#252b35; box-shadow:0 1px 6px #0005; }
+.comparison-views { display:flex; gap:6px; margin-top:8px; }
+.comparison-views button { flex:1; padding:7px; border:1px solid var(--line); border-radius:8px; color:var(--text); background:var(--surface-solid); cursor:pointer; font-size:12px; }
+.comparison-views button[aria-pressed="true"] { border-color:var(--accent); background:var(--accent-soft); }
 .comparison-caption { position:absolute; bottom:8px; left:8px; padding:3px 8px; border-radius:5px; background:#0009; color:white; font-size:11px; }
 .comparison-caption.right { left:auto; right:8px; }
 .image-comparison > input { width:100%; margin:12px 0 0; accent-color:var(--accent); }

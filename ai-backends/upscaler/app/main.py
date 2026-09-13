@@ -17,6 +17,8 @@ from fastapi.responses import Response
 from PIL import Image, ImageOps
 from spandrel import ImageModelDescriptor, ModelLoader
 
+from .faces import FaceRestorer
+
 LOG = logging.getLogger(__name__)
 MODEL_DIR = Path(os.getenv('MODEL_DIR', '/models'))
 MAX_UPLOAD = int(os.getenv('MAX_UPLOAD_BYTES', 52428800))
@@ -26,6 +28,7 @@ DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
 LOCK = threading.Lock()
 MODELS = {}
 LOAD_TIMES = {}
+FACE_RESTORER = None
 SPECS = {
     'standard-2': ('RealESRGAN_x2plus.pth', 2, 256),
     'standard-4': ('RealESRGAN_x4plus.pth', 4, 256),
@@ -42,6 +45,7 @@ torch.set_num_threads(2)
 
 @asynccontextmanager
 async def lifespan(app):
+    global FACE_RESTORER
     if os.getenv('REQUIRE_CUDA', 'true') == 'true' and DEVICE.type != 'cuda':
         raise RuntimeError('GPU unavailable; refusing to silently start CPU upscaling')
     for name, (filename, _, _) in SPECS.items():
@@ -62,7 +66,9 @@ async def lifespan(app):
         MODELS[name] = engine
         LOAD_TIMES[name] = round(time.monotonic() - started, 3)
         LOG.warning('Loaded %s in %.2fs on %s', name, LOAD_TIMES[name], DEVICE)
+    FACE_RESTORER = FaceRestorer(MODEL_DIR / 'faces', DEVICE)
     yield
+    FACE_RESTORER = None
     MODELS.clear()
 
 
@@ -82,7 +88,7 @@ def health():
     if not ready:
         raise HTTPException(503, 'GPU unavailable')
     return {'status': 'ok' if ready else 'degraded', 'device': str(DEVICE),
-            'models': list(MODELS), 'loadSeconds': LOAD_TIMES,
+            'models': list(MODELS), 'loadSeconds': LOAD_TIMES, 'faceRestoration': FACE_RESTORER is not None,
             'residentMiB': round(torch.cuda.memory_allocated() / 1048576) if gpu_ok else 0}
 
 
@@ -120,10 +126,12 @@ def infer_tile(image, engine):
     return Image.fromarray(np.rint(np.clip(result.transpose(1, 2, 0), 0, 1) * 255).astype('uint8'))
 
 
-def process(image, key, scale, strength):
+def process(image, key, scale, strength, face_restoration=0):
     width, height = image.size
     if width * height * scale * scale > MAX_OUTPUT:
         raise HTTPException(413, 'Image too large for selected scale')
+    if face_restoration and width * height * scale * scale > 32000000:
+        raise HTTPException(413, 'Face restoration supports up to 32 megapixels of output')
     _, native_scale, tile = SPECS[key]
     rgb = image.convert('RGB')
     result = Image.new('RGB', (width * scale, height * scale))
@@ -145,6 +153,9 @@ def process(image, key, scale, strength):
                     original = rgb.crop((x,y,right,bottom)).resize(size, Image.Resampling.LANCZOS)
                     output = Image.blend(original, output, strength / 100)
                 result.paste(output, (x*scale, y*scale))
+        if face_restoration:
+            result, count = FACE_RESTORER.restore(rgb, result, scale, face_restoration)
+            result.info['faces_restored'] = count
         if DEVICE.type == 'cuda':
             torch.cuda.synchronize()
     if 'A' in image.getbands():
@@ -155,9 +166,9 @@ def process(image, key, scale, strength):
 @app.post('/upscale')
 async def upscale(file: UploadFile = File(...), scale: int = Form(4),
                   format: str = Form('png'), model: str = Form('standard'),
-                  strength: int = Form(100)):
+                  strength: int = Form(100), face_restoration: int = Form(0)):
     key = resolve_model(model, scale)
-    if format not in ('png', 'jpeg', 'jpg', 'webp') or not 0 <= strength <= 100:
+    if format not in ('png', 'jpeg', 'jpg', 'webp') or not 0 <= strength <= 100 or face_restoration not in (0, 50, 100):
         raise HTTPException(400, 'Invalid output options')
     try:
         raw = await file.read(MAX_UPLOAD + 1)
@@ -168,7 +179,7 @@ async def upscale(file: UploadFile = File(...), scale: int = Form(4),
     image = await asyncio.to_thread(decode, raw)
     started = time.monotonic()
     try:
-        result = await asyncio.to_thread(process, image, key, scale, strength)
+        result = await asyncio.to_thread(process, image, key, scale, strength, face_restoration)
     except torch.cuda.OutOfMemoryError as exc:
         raise HTTPException(413, 'GPU out of memory') from exc
     buffer = BytesIO()
@@ -180,4 +191,5 @@ async def upscale(file: UploadFile = File(...), scale: int = Form(4),
     await asyncio.to_thread(result.save, buffer, format=fmt)
     elapsed = time.monotonic() - started
     return Response(buffer.getvalue(), media_type=f'image/{fmt.lower()}',
-                    headers={'X-Processing-Seconds': f'{elapsed:.3f}', 'X-Model': key})
+                    headers={'X-Processing-Seconds': f'{elapsed:.3f}', 'X-Model': key,
+                             'X-Faces-Restored': str(result.info.get('faces_restored', 0))})

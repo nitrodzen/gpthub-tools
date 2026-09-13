@@ -5,10 +5,13 @@ from pathlib import Path
 
 from PIL import Image, ImageOps
 
+from .models import JobWarning
 from .operations import image_extension, package_outputs, remove_background, save_image, upscale
 
 
-async def image_pipeline(files: list[dict], output_dir: Path, options: dict) -> Path:
+async def image_pipeline(
+    files: list[dict], output_dir: Path, options: dict, warnings: list[JobWarning] | None = None
+) -> Path:
     outputs = []
     for index, item in enumerate(files, 1):
         with tempfile.TemporaryDirectory(prefix=".pipeline-", dir=output_dir) as temporary:
@@ -18,16 +21,32 @@ async def image_pipeline(files: list[dict], output_dir: Path, options: dict) -> 
             stages = []
             if options.get("removeBackground", True):
                 stages.append(("remove", remove_background, {**options, "format": "png"}))
-            if options.get("enhance", False):
+            scale = int(options.get("scale", 1))
+            if options.get("enhance", False) or (scale == 1 and options.get("faceRestoration", 0)):
                 stages.append(
-                    ("enhance", upscale, {**options, "format": "png", "model": "clean", "scale": 1})
+                    (
+                        "enhance",
+                        upscale,
+                        {
+                            **options,
+                            "format": "png",
+                            "model": "clean",
+                            "scale": 1,
+                            "faceRestoration": options.get("faceRestoration", 0)
+                            if scale == 1
+                            else 0,
+                        },
+                    )
                 )
-            if int(options.get("scale", 1)) > 1:
+            if scale > 1:
                 stages.append(("upscale", upscale, {**options, "format": "png"}))
             for name, handler, parameters in stages:
                 folder = root / name
                 folder.mkdir()
-                source = await handler([current], folder, parameters)
+                if handler is upscale:
+                    source = await handler([current], folder, parameters, warnings=warnings)
+                else:
+                    source = await handler([current], folder, parameters)
                 current = {
                     "path": str(source),
                     "original": "image.png",

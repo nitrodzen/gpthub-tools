@@ -108,6 +108,7 @@ const copy = {
     warningsTitle: 'Предупреждения',
     warnings: {
       OCR_REVIEW: 'Проверьте распознанный текст. В Word используется простая редактируемая разметка.',
+      FACE_NOT_FOUND: 'На одном из изображений лицо не распознано. Улучшение выполнено без дорисовки лица.',
       FORMULAS_AS_VALUES: 'Формулы перенесены как сохранённые значения, а при их отсутствии — как текст формулы.',
       OBJECTS_SKIPPED: 'Неподдерживаемое содержимое или встроенные объекты были пропущены.',
       LAYOUT_SIMPLIFIED: 'Часть сложной вёрстки была упрощена.',
@@ -246,6 +247,7 @@ const copy = {
     warningsTitle: 'Warnings',
     warnings: {
       OCR_REVIEW: 'Review the recognized text. Word uses a simple editable layout.',
+      FACE_NOT_FOUND: 'No face was detected in one of the images. Enhancement was applied without face reconstruction.',
       FORMULAS_AS_VALUES: 'Formulas were transferred as saved values, or as formula text when no saved value existed.',
       OBJECTS_SKIPPED: 'Unsupported content or embedded objects were skipped.',
       LAYOUT_SIMPLIFIED: 'Some complex layout was simplified.',

@@ -267,7 +267,12 @@ def convert_images(files: list[dict[str, Any]], output_dir: Path, options: dict[
     return package_outputs(output_dir, outputs, "converted-images.zip")
 
 
-async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[str, Any]) -> Path:
+async def upscale(
+    files: list[dict[str, Any]],
+    output_dir: Path,
+    options: dict[str, Any],
+    warnings: list[JobWarning] | None = None,
+) -> Path:
     scale = int(options.get("scale", 2))
     if scale not in {1, 2, 4}:
         raise JobFailure(ErrorCode.INVALID_FILE, "Upscale factor must be 2 or 4")
@@ -285,7 +290,7 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
             with Path(item["path"]).open("rb") as source:
                 response = await client.post(
                     (settings.enhance_url or settings.upscale_url)
-                    if scale == 1
+                    if scale == 1 and not options.get("faceRestoration", 0)
                     else settings.upscale_url,
                     files={
                         "file": (
@@ -299,10 +304,26 @@ async def upscale(files: list[dict[str, Any]], output_dir: Path, options: dict[s
                         "format": upstream_format,
                         "model": str(options.get("model", "standard")),
                         "strength": str(options.get("strength", 100)),
+                        "face_restoration": str(options.get("faceRestoration", 0)),
                     },
                 )
             raw = output_dir / f"upscaled_{clean_stem(item['original'])}_{index}.png"
             raw.write_bytes(validated_upscale_png(response, expected_size))
+            if (
+                options.get("faceRestoration", 0)
+                and response.headers.get("x-faces-restored") == "0"
+                and warnings is not None
+            ):
+                warnings.append(
+                    JobWarning(
+                        code="FACE_NOT_FOUND",
+                        message=(
+                            "No face detected in this image; the selected enhancement "
+                            "was applied without face reconstruction."
+                        ),
+                        details={"file": item["original"]},
+                    )
+                )
             await response.aclose()
             del response
             if fmt != "png":
@@ -543,14 +564,17 @@ def pdf_to_images(files: list[dict[str, Any]], output_dir: Path, options: dict[s
 async def execute(
     operation: Operation, files: list[dict[str, Any]], output_dir: Path, options: dict[str, Any]
 ) -> OperationResult:
+    warnings: list[JobWarning] = []
     if operation in {Operation.UPSCALE, Operation.UPSCALE_PREVIEW}:
-        result = await upscale(files, output_dir, options)
+        result = await upscale(files, output_dir, options, warnings=warnings)
     elif operation is Operation.IMAGE_ENHANCE:
-        result = await upscale(files, output_dir, {**options, "scale": 1, "model": "clean"})
+        result = await upscale(
+            files, output_dir, {**options, "scale": 1, "model": "clean"}, warnings=warnings
+        )
     elif operation is Operation.IMAGE_PIPELINE:
         from .image_pipeline import image_pipeline
 
-        result = await image_pipeline(files, output_dir, options)
+        result = await image_pipeline(files, output_dir, options, warnings=warnings)
     elif operation is Operation.OCR:
         from .ocr import run_ocr_isolated
 
@@ -580,7 +604,7 @@ async def execute(
     else:
         raise JobFailure(ErrorCode.UNSUPPORTED_FORMAT, "Unknown operation")
     ensure_result_limit(result)
-    return OperationResult(result)
+    return OperationResult(result, warnings)
 
 
 def result_mime(path: Path) -> str:

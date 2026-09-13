@@ -376,6 +376,7 @@ export default function App() {
   const [scale, setScale] = useState(2)
   const [model, setModel] = useState('standard')
   const [strength, setStrength] = useState(100)
+  const [faceRestoration, setFaceRestoration] = useState(0)
   const [backgroundPreset, setBackgroundPreset] = useState('fast')
   const [removeBackground, setRemoveBackground] = useState(true)
   const [enhance, setEnhance] = useState(false)
@@ -655,8 +656,8 @@ export default function App() {
     setSubmittingTab(targetTab)
     setError(null)
     const options: Record<string, unknown> = {}
-    if (targetOperation === 'upscale' || targetOperation === 'image-enhance') Object.assign(options, { scale: targetScale, model, strength, format, quality })
-    if (targetOperation === 'image-pipeline') Object.assign(options, { scale: targetScale, model, strength, format, quality, removeBackground, enhance, background, backgroundPreset, maxWidth: Number(maxWidth) || 0, maxHeight: Number(maxHeight) || 0 })
+    if (targetOperation === 'upscale' || targetOperation === 'image-enhance') Object.assign(options, { scale: targetScale, model, strength, faceRestoration, format, quality })
+    if (targetOperation === 'image-pipeline') Object.assign(options, { scale: targetScale, model, strength, faceRestoration, format, quality, removeBackground, enhance, background, backgroundPreset, maxWidth: Number(maxWidth) || 0, maxHeight: Number(maxHeight) || 0 })
     if (targetOperation === 'ocr') Object.assign(options, { format: ocrFormat, language: ocrLanguage })
     if (targetOperation === 'remove-background') Object.assign(options, { format, quality, backgroundPreset })
     if (targetOperation === 'image-convert') Object.assign(options, { format, quality, maxWidth: Number(maxWidth) || 0, maxHeight: Number(maxHeight) || 0 })
@@ -863,7 +864,7 @@ export default function App() {
             <div className="upload-column">
               <FileDrop files={files} accept={accept} onAdd={addFiles} copy={copy} />
               <FileList files={files} setFiles={setFiles} copy={copy} />
-              {tab === 'upscale' && <ModelExplorer file={files[0]} model={model} scale={scale} strength={strength} language={language} />}
+              {tab === 'upscale' && <ModelExplorer file={files[0]} model={model} scale={scale} strength={strength} faceRestoration={faceRestoration} language={language} />}
             </div>
             <div className="settings-column">
               <div className="settings-head"><span>02</span><strong>{language === 'ru' ? 'Настройки' : 'Settings'}</strong></div>
@@ -875,6 +876,7 @@ export default function App() {
                   <button disabled={model === 'photo'} className={scale === 4 ? 'active' : ''} onClick={() => setScale(4)}>4×</button>
                 </div></div>
                 <div className="field"><label htmlFor="enhancement-strength">{language === 'ru' ? 'Сила улучшения' : 'Enhancement strength'} <output>{strength}%</output></label><input id="enhancement-strength" type="range" min="0" max="100" step="10" value={strength} onChange={event => setStrength(Number(event.target.value))} /><small className="field-help">{language === 'ru' ? 'Уменьшите, чтобы бережнее сохранить исходную фактуру.' : 'Lower it to preserve more of the original texture.'}</small></div>
+                <div className="field"><label htmlFor="face-restoration">{language === 'ru' ? 'Дорисовка лица' : 'Face reconstruction'}</label><select id="face-restoration" value={faceRestoration} onChange={event => setFaceRestoration(Number(event.target.value))}><option value={0}>{language === 'ru' ? 'Выключена' : 'Off'}</option><option value={50}>{language === 'ru' ? 'Бережная' : 'Gentle'}</option><option value={100}>{language === 'ru' ? 'Сильная — для размытых фото' : 'Strong — for blurry photos'}</option></select><small className="field-help">{language === 'ru' ? 'Восстанавливает детали распознанных лиц. Сильный режим может менять черты; волосы и закрытые участки восстанавливаются слабее.' : 'Reconstructs detected faces. Strong mode can change facial features; hair and occluded areas recover less reliably.'}</small></div>
               </>}
               {tab === 'studio' && <><label className="check-field"><input type="checkbox" checked={removeBackground} onChange={event => setRemoveBackground(event.target.checked)} />{language === 'ru' ? 'Удалить фон' : 'Remove background'}</label><label className="check-field"><input type="checkbox" checked={enhance} onChange={event => setEnhance(event.target.checked)} />{language === 'ru' ? 'Убрать шум и следы сжатия' : 'Remove noise and compression artifacts'}</label></>}
               {(tab === 'remove' || (tab === 'studio' && removeBackground)) && <div className="field"><label htmlFor="background-preset">{language === 'ru' ? 'Точность удаления фона' : 'Background removal'}</label><select id="background-preset" value={backgroundPreset} onChange={event => setBackgroundPreset(event.target.value)}><option value="fast">{language === 'ru' ? 'Быстро' : 'Fast'}</option><option value="quality">{language === 'ru' ? 'Точно' : 'Precise'}</option><option value="portrait">{language === 'ru' ? 'Портрет и волосы' : 'Portrait and hair'}</option></select></div>}
