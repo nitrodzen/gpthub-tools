@@ -754,8 +754,8 @@ export default function App() {
     }
   }
 
-  const title = tab === 'studio' ? (language === 'ru' ? 'Подготовка изображений' : 'Prepare images') : tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
-  const lead = tab === 'studio' ? (language === 'ru' ? 'Удалите фон, улучшите изображение и сохраните в нужном размере за один запуск.' : 'Remove backgrounds, enhance and resize your images in one run.') : tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
+  const title = tab === 'studio' ? (language === 'ru' ? 'Комбо-обработка' : 'Combo processing') : tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
+  const lead = tab === 'studio' ? (language === 'ru' ? 'Удаление фона, улучшение, увеличение и нужный размер — всё за один запуск.' : 'Background removal, enhancement, upscaling and resizing — all in one run.') : tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
   const visibleError = visibleTrackedJob?.error || visibleJob?.error || error
   const localizedError = visibleError?.code ? copy.errors[visibleError.code] || visibleError.message : visibleError?.message
   const localizedWarnings = (visibleJob?.warnings || []).map((warning) => copy.warnings[warning.code] || warning.message || warning.code)
@@ -804,7 +804,7 @@ export default function App() {
         <nav className="tabs" aria-label="Tools">
           {(['upscale', 'remove', 'studio', 'convert'] as Tab[]).map((item) => (
             (() => {
-              const label = item === 'studio' ? (language === 'ru' ? 'Подготовить' : 'Prepare') : item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert
+              const label = item === 'studio' ? (language === 'ru' ? 'Комбо' : 'Combo') : item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert
               const readyCount = readyCountByTab(item)
               return <button
                 key={item}
