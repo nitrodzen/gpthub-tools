@@ -10,6 +10,7 @@ export default function QrTool({ ru }: { ru: boolean }) {
   const [fields, setFields] = useState<Record<string,string>>({})
   const [security, setSecurity] = useState('WPA')
   const [shape, setShape] = useState('square')
+  const [frame, setFrame] = useState('square')
   const [ink, setInk] = useState<string>(palettes.Ink)
   const [paper, setPaper] = useState('#ffffff')
   const [size, setSize] = useState(1024)
@@ -36,11 +37,19 @@ export default function QrTool({ ru }: { ru: boolean }) {
       if(!matrix.isDark(y,x)) continue
       const finder=(x<7 && y<7)||(x>=n-7 && y<7)||(x<7 && y>=n-7)
       const px=x+4, py=y+4
-      if (!finder && shape==='dots') pieces.push('<circle cx="'+(px+.5)+'" cy="'+(py+.5)+'" r=".49"/>')
+      if (!finder && shape==='heart') pieces.push(`<path transform="translate(${px} ${py})" d="M.5 .98 C.43 .88 .01 .65 .01 .32 C.01 .02 .33 -.07 .5 .16 C.68 -.07 .99 .02 .99 .32 C.99 .62 .62 .87 .5 .98Z"/>`)
+      else if (!finder && shape==='dots') pieces.push('<circle cx="'+(px+.5)+'" cy="'+(py+.5)+'" r=".49"/>')
       else pieces.push('<rect x="'+px+'" y="'+py+'" width="1" height="1" rx="'+(!finder && shape==='round'?.28:0)+'"/>')
     }
-    return '<svg xmlns="http://www.w3.org/2000/svg" width="'+size+'" height="'+size+'" viewBox="0 0 '+side+' '+side+'"><rect width="100%" height="100%" fill="'+paper+'"/><g fill="'+ink+'">'+pieces.join('')+'</g></svg>'
-  },[matrix,shape,size,ink,paper])
+    const modules = `<g fill="${ink}">${pieces.join('')}</g>`
+    const tile = `<rect width="${side}" height="${side}" fill="${paper}"/>${modules}`
+    if (frame === 'square') return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 ${side} ${side}">${tile}</svg>`
+    const circle = frame === 'circle'
+    const outline = circle ? '<circle cx="50" cy="50" r="49"/>' : '<path d="M50 99 C42 90 1 66 1 34 C1 4 31 -7 50 14 C69 -7 99 4 99 34 C99 66 58 90 50 99Z"/>'
+    const width = circle ? 68 : 50
+    const top = circle ? 16 : 19
+    return `<svg xmlns="http://www.w3.org/2000/svg" width="${size}" height="${size}" viewBox="0 0 100 100"><g fill="${paper}" stroke="${ink}" stroke-width="1.4">${outline}</g><g transform="translate(${(100-width)/2} ${top}) scale(${width/side})">${tile}</g></svg>`
+  },[matrix,shape,frame,size,ink,paper])
   const uri=useMemo(()=>svg?'data:image/svg+xml;charset=utf-8,'+encodeURIComponent(svg):'',[svg])
   async function download(format:string) {
     try {
@@ -59,7 +68,8 @@ export default function QrTool({ ru }: { ru: boolean }) {
   return <section className="workspace-card qr-tool"><div className="qr-controls">
     <label>{t('Содержимое','Content')}<select value={kind} onChange={e=>setKind(e.target.value)}>{[['url',t('Ссылка','Link')],['text',t('Текст','Text')],['wifi','Wi-Fi'],['email','Email'],['tel',t('Телефон','Phone')]].map(([id,label])=><option value={id} key={id}>{label}</option>)}</select></label>
     {kind==='url'?<label>URL<input value={fields.url??'https://tools.gpthub.ru'} onChange={e=>edit('url',e.target.value)} maxLength={3000}/></label>:kind==='wifi'?<>{input('ssid',t('Название сети','Network name'))}<label>{t('Защита','Security')}<select value={security} onChange={e=>setSecurity(e.target.value)}><option>WPA</option><option>WEP</option><option value="nopass">{t('Открытая сеть','Open network')}</option></select></label>{security!=='nopass'&&input('pass',t('Пароль','Password'),'password')}</>:kind==='email'?<>{input('email','Email','email')}{input('subject',t('Тема письма','Subject'))}</>:kind==='text'?<label>{t('Текст','Text')}<textarea value={value(kind)} maxLength={3000} onChange={e=>edit(kind,e.target.value)}/></label>:input('tel',t('Номер телефона','Phone number'),'tel')}
-    <label>{t('Форма модулей','Module shape')}<select value={shape} onChange={e=>setShape(e.target.value)}><option value="square">{t('Квадраты','Squares')}</option><option value="round">{t('Скруглённые','Rounded')}</option><option value="dots">{t('Точки','Dots')}</option></select></label>
+    <label>{t('Форма модулей','Module shape')}<select value={shape} onChange={e=>setShape(e.target.value)}><option value="square">{t('Квадраты','Squares')}</option><option value="round">{t('Скруглённые','Rounded')}</option><option value="dots">{t('Точки','Dots')}</option><option value="heart">{t('Сердечки','Hearts')}</option></select></label>
+    <label>{t('Контур наклейки','Sticker outline')}<select value={frame} onChange={e=>setFrame(e.target.value)}><option value="square">{t('Квадрат','Square')}</option><option value="circle">{t('Круг','Circle')}</option><option value="heart">{t('Сердце','Heart')}</option></select></label>
     <div className="qr-swatches">{Object.entries(palettes).map(([name,color])=><button key={name} aria-label={name} title={name} style={{background:color}} onClick={()=>{setInk(color);setPaper('#ffffff')}}/>)}</div>
     <div className="qr-pair"><label>{t('Цвет кода','Ink')}<input type="color" value={ink} onChange={e=>setInk(e.target.value)}/></label><label>{t('Фон','Background')}<input type="color" value={paper} onChange={e=>setPaper(e.target.value)}/></label></div>
     <div className="qr-pair"><label>{t('Размер','Size')}<select value={size} onChange={e=>setSize(+e.target.value)}>{[512,1024,2048,4096].map(n=><option key={n} value={n}>{n} px</option>)}</select></label><label>{t('Коррекция ошибок','Error correction')}<select value={level} onChange={e=>setLevel(e.target.value as typeof level)}>{['M','Q','H'].map(v=><option key={v}>{v}</option>)}</select></label></div></div>
