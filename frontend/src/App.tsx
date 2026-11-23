@@ -1,9 +1,10 @@
+import QrTool from './QrTool'
 import { useCallback, useEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type PointerEvent as ReactPointerEvent } from 'react'
 import { cancelJob, createJob, fetchResult, getJob, type Job, type JobCapability, type Operation } from './api'
 import { getCopy, type Language } from './i18n'
 import { ImageComparison, ModelExplorer, ModelPicker } from './ImageLab'
 
-type Tab = 'upscale' | 'remove' | 'studio' | 'convert'
+type Tab = 'qr' | 'upscale' | 'remove' | 'studio' | 'convert'
 type ConvertMode = 'images' | 'documents' | 'pdf'
 type PdfAction = 'pdf-merge' | 'pdf-split' | 'images-to-pdf' | 'pdf-to-images'
 type DocumentAction = 'word-to-pdf' | 'pdf-to-word' | 'word-to-excel' | 'excel-to-word' | 'ocr'
@@ -68,7 +69,7 @@ function readTrackedJobs(): TrackedJobs {
   try {
     const stored = JSON.parse(localStorage.getItem(TRACKED_JOBS_STORAGE_KEY) || '{}') as Record<string, Partial<TrackedJob>>
     const restored: TrackedJobs = {}
-    for (const tab of ['upscale', 'remove', 'studio', 'convert'] as Tab[]) {
+    for (const tab of ['upscale', 'remove', 'studio', 'convert', 'qr'] as Tab[]) {
       const entry = stored[tab]
       if (!entry?.capability?.jobId || !entry.capability.token || !entry.operation || Date.parse(entry.capability.expiresAt || '') <= Date.now()) continue
       restored[tab] = {
@@ -123,13 +124,14 @@ export function formatDuration(seconds: number, language: Language) {
 const routeForTab: Record<Tab, string> = {
   upscale: '/upscale',
   remove: '/remove-background',
+  qr: '/qr',
   studio: '/prepare-image',
   convert: '/convert/images',
 }
 
 function routeState() {
   const path = window.location.pathname
-  const tab: Tab = path.startsWith('/prepare-image') ? 'studio' : path.startsWith('/remove-background') ? 'remove' : path.startsWith('/convert') ? 'convert' : 'upscale'
+  const tab: Tab = path === '/qr' ? 'qr' : path.startsWith('/prepare-image') ? 'studio' : path.startsWith('/remove-background') ? 'remove' : path.startsWith('/convert') ? 'convert' : 'upscale'
   const mode: ConvertMode = path.startsWith('/convert/documents')
     ? 'documents'
     : path.startsWith('/convert/pdf')
@@ -755,8 +757,8 @@ export default function App() {
     }
   }
 
-  const title = tab === 'studio' ? (language === 'ru' ? 'Комбо-обработка' : 'Combo processing') : tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
-  const lead = tab === 'studio' ? (language === 'ru' ? 'Удаление фона, улучшение, увеличение и нужный размер — всё за один запуск.' : 'Background removal, enhancement, upscaling and resizing — all in one run.') : tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
+  const title = tab === 'qr' ? (language === 'ru' ? 'Генератор QR-кодов' : 'QR code generator') : tab === 'studio' ? (language === 'ru' ? 'Комбо-обработка' : 'Combo processing') : tab === 'upscale' ? copy.upscaleTitle : tab === 'remove' ? copy.removeTitle : copy.convertTitle
+  const lead = tab === 'qr' ? (language === 'ru' ? 'Создайте QR-код прямо в браузере и скачайте его для экрана или печати.' : 'Create a QR code in your browser and download it for screen or print.') : tab === 'studio' ? (language === 'ru' ? 'Удаление фона, улучшение, увеличение и нужный размер — всё за один запуск.' : 'Background removal, enhancement, upscaling and resizing — all in one run.') : tab === 'upscale' ? copy.upscaleLead : tab === 'remove' ? copy.removeLead : copy.convertLead
   const visibleError = visibleTrackedJob?.error || visibleJob?.error || error
   const localizedError = visibleError?.code ? copy.errors[visibleError.code] || visibleError.message : visibleError?.message
   const localizedWarnings = (visibleJob?.warnings || []).map((warning) => copy.warnings[warning.code] || warning.message || warning.code)
@@ -803,9 +805,9 @@ export default function App() {
 
       <main>
         <nav className="tabs" aria-label="Tools">
-          {(['upscale', 'remove', 'studio', 'convert'] as Tab[]).map((item) => (
+          {(['upscale', 'remove', 'studio', 'convert', 'qr'] as Tab[]).map((item) => (
             (() => {
-              const label = item === 'studio' ? (language === 'ru' ? 'Комбо' : 'Combo') : item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert
+              const label = item === 'qr' ? 'QR' : item === 'studio' ? (language === 'ru' ? 'Комбо' : 'Combo') : item === 'upscale' ? copy.upscale : item === 'remove' ? copy.remove : copy.convert
               const readyCount = readyCountByTab(item)
               return <button
                 key={item}
@@ -859,7 +861,7 @@ export default function App() {
           </div>
         )}
 
-        <section className="workspace-card">
+        {tab === 'qr' ? <QrTool ru={language === 'ru'}/> : <><section className="workspace-card">
           <div className="workspace-grid">
             <div className="upload-column">
               <FileDrop files={files} accept={accept} onAdd={addFiles} copy={copy} />
@@ -910,7 +912,7 @@ export default function App() {
 
         </section>
 
-        <div className="privacy-note"><span>⌁</span><p>{copy.privacy}</p></div>
+        <div className="privacy-note"><span>⌁</span><p>{copy.privacy}</p></div></>}
       </main>
 
       <footer><span>© {new Date().getFullYear()} GPTHub Tools</span><div><a href="https://github.com/nitrodzen/gpthub-tools/blob/main/docs/IMAGE_LAB.md" target="_blank" rel="noreferrer">{language === 'ru' ? 'Модели и авторы' : 'Models and credits'}</a><a href="mailto:support@gpthub.ru?subject=GPTHub%20Tools">{copy.support}</a><a href="https://github.com/nitrodzen/gpthub-tools" target="_blank" rel="noreferrer">{copy.github} ↗</a></div></footer>
